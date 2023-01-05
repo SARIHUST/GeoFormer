@@ -19,7 +19,7 @@ from util.config import cfg
 
 from .scannetv2 import FOLD
 
-
+# 以train_fs对应的情况为例进行分析
 class FSInstDataset:
     def __init__(self, split_set="train"):
         self.data_root = cfg.data_root
@@ -46,16 +46,18 @@ class FSInstDataset:
         ]
         self.file_names = sorted(self.file_names)
 
-        self.SEMANTIC_LABELS = FOLD[cfg.cvfold]
+        self.SEMANTIC_LABELS = FOLD[cfg.cvfold]     # FOLD[0] FOLD0_NAME = ["cabinet", "bed", "chair", "door", "bookshelf", "counter", "desk", "curtain", "bathtub"]
+        # 得到support的物品种类[2, 3, 4, 7, 9, 11, 12, 13, 18]
         self.SEMANTIC_LABELS_MAP = {val: (idx + 4) for idx, val in enumerate(self.SEMANTIC_LABELS)}
+        # 加一个映射，2 -> 4, 3 -> 5, 4 -> 7, ... 不是很清楚这个作用
 
         class2scans_file = os.path.join(self.data_root, self.dataset, "class2scans.pkl")
         with open(class2scans_file, "rb") as f:
-            self.class2scans_scenes = pickle.load(f)
+            self.class2scans_scenes = pickle.load(f)    # 20种物体实例对应的场景的映射（哪些场景包含该实例）
 
         class2instances_file = os.path.join(self.data_root, self.dataset, "class2instances.pkl")
         with open(class2instances_file, "rb") as f:
-            self.class2instances = pickle.load(f)
+            self.class2instances = pickle.load(f)       # 为每个物体实例类别确定其在每个场景中所属的实例编号{instance_type: [[scene, idx], [scene, idx], ...]}
 
     def __len__(self):
         return len(self.file_names)
@@ -415,27 +417,27 @@ class FSInstDataset:
         query_pc_maxs = []
         scene_infos = []
 
-        total_inst_num = 0
-        for idx, id in enumerate(ids):
+        # total_inst_num = 0    本来query_instance_label是增加total_inst_num的，但是这个值从来不改变，没有用，感觉应当是query_total_inst_num
+        for idx, id in enumerate(ids):  # ids中的索引无效，需要确定sampled_class之后重新选择scene
             sampled_class = random.choice(self.SEMANTIC_LABELS)
 
             query_scene_name = random.choice(self.class2scans_scenes[sampled_class])
 
             query_xyz_middle, query_xyz_scaled, query_rgb, query_label, query_instance_label = self.load_single(
                 query_scene_name, aug=True, permutate=True, val=False
-            )
-            query_label = query_label == sampled_class
-            query_instance_label[(query_label == 0).nonzero()] = -100
+            )# 分别对应点云中各点的两种xyz坐标，rgb颜色，语义标签，实例编号
+            query_label = query_label == sampled_class  # 只有选定的语义类别取值为1，其余为0，用作语义mask
+            query_instance_label[(query_label == 0).nonzero()] = -100   # 其他语义类别的实例编号全部赋值为-100
 
-            query_instance_label = self.getCroppedInstLabel(query_instance_label, valid_idxs=None)
+            query_instance_label = self.getCroppedInstLabel(query_instance_label, valid_idxs=None)  # 重新给留下的实例确定从0开始的连续编号
             # get instance information
             query_inst_num, inst_infos = self.getInstanceInfo(query_xyz_middle, query_instance_label.astype(np.int32))
             query_inst_pointnum = inst_infos["instance_pointnum"]  # (nInst), list
 
-            query_instance_label[np.where(query_instance_label != -100)] += total_inst_num
+            query_instance_label[np.where(query_instance_label != -100)] += query_total_inst_num  # 最终要按一个batch形成一个整体，后续的scene中的编号需要一次递增
             query_total_inst_num += query_inst_num
 
-            query_batch_offsets.append(query_batch_offsets[-1] + query_xyz_scaled.shape[0])
+            query_batch_offsets.append(query_batch_offsets[-1] + query_xyz_scaled.shape[0])     # 计算batch中各个scene点的数量的前缀和
             query_locs.append(
                 torch.cat(
                     [
@@ -444,7 +446,7 @@ class FSInstDataset:
                     ],
                     1,
                 )
-            )
+            )   # query_locs[idx]表示的是该batch中第idx个scene的xyz_scaled数据，在最前面增加一列全为idx的用来表示索引
             query_locs_float.append(torch.from_numpy(query_xyz_middle))
             query_feats.append(torch.from_numpy(query_rgb))
             query_labels.append(torch.from_numpy(query_label))
@@ -468,9 +470,10 @@ class FSInstDataset:
                     support_instance_label,
                 ) = self.load_single(support_scene_name, aug=False, permutate=False, val=False, support=True)
 
-                support_mask = support_instance_label == support_instance_id
+                support_mask = support_instance_label == support_instance_id    # support_scene中只标出一个sampled_class对应的物体，其余即使是同一语义标签的物体也会被mask掉
 
-                if np.count_nonzero(support_label) > 100:
+                if np.count_nonzero(support_mask) > 100:
+                # if np.count_nonzero(support_label) > 100: 这里前面没有处理过support_label，这样这个判断是没有意义的，应当改为support_mask
                     break
 
             support_batch_offsets.append(support_batch_offsets[-1] + support_xyz_scaled.shape[0])

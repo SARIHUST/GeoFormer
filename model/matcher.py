@@ -78,13 +78,13 @@ class HungarianMatcher(nn.Module):
 
     def forward_seg_single(self, mask_logit, sem_logit, instance_masked, semantic_masked, fewshot=False):
         with torch.no_grad():
-
+            # Fewshot阶段传入的参数sem_logit是similarity_score
             n_mask = instance_masked.shape[-1]
 
             if n_mask == 0:
                 return None, None, None
 
-            unique_inst = sorted(torch.unique(instance_masked))
+            unique_inst = sorted(torch.unique(instance_masked)) # 实例编号
             unique_inst = [i for i in unique_inst if i != -100]
             n_inst_gt = len(unique_inst)
             # print('unique_inst', unique_inst)
@@ -92,7 +92,7 @@ class HungarianMatcher(nn.Module):
             sem_labels = torch.zeros((n_inst_gt)).to(mask_logit.device)
             # min_inst_id = min(unique_inst)
             count = 0
-            for idx in unique_inst:
+            for idx in unique_inst:             # 填入各个实例的inst_mask和sem_label
                 temp = instance_masked == idx
                 inst_masks[count, :] = temp
 
@@ -102,7 +102,7 @@ class HungarianMatcher(nn.Module):
             dice_cost = compute_dice(
                 mask_logit.reshape(-1, 1, n_mask).repeat(1, n_inst_gt, 1).flatten(0, 1),
                 inst_masks.reshape(1, -1, n_mask).repeat(self.n_queries, 1, 1).flatten(0, 1),
-            )
+            )   # 预测的mask和gt的mask之间的loss
 
             dice_cost = dice_cost.reshape(self.n_queries, n_inst_gt)
 
@@ -121,7 +121,7 @@ class HungarianMatcher(nn.Module):
 
             final_cost = final_cost.detach().cpu().numpy()
 
-            row_inds, col_inds = linear_sum_assignment(final_cost)
+            row_inds, col_inds = linear_sum_assignment(final_cost)  # 应当是根据矩阵找到的match配对，col_inds对应的是最接近的实例gt的编号
 
             return row_inds, inst_masks[col_inds], sem_labels[col_inds]
 

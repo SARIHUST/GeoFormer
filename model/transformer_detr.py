@@ -157,8 +157,8 @@ class TransformerDecoder(nn.Module):
         if self.norm is not None:
             output = self.norm(output)
             if self.return_intermediate:
-                intermediate.pop()
-                intermediate.append(output)
+                intermediate.pop()              # 移除当前最后一个中间结果
+                intermediate.append(output)     # 再将output添加至末尾
 
         if self.return_intermediate:
             return torch.stack(intermediate)
@@ -346,15 +346,15 @@ class TransformerEncoderLayer(nn.Module):
 class TransformerDecoderLayer(nn.Module):
     def __init__(
         self,
-        d_model,
+        d_model,                # 64
         nhead=4,
-        dim_feedforward=256,
+        dim_feedforward=256,    # 64
         dropout=0.1,
         dropout_attn=None,
         activation="relu",
         normalize_before=True,
-        use_rel=False,
-        norm_fn_name="ln",
+        use_rel=False,          # True
+        norm_fn_name="ln",      # LayerNorm
     ):
         super().__init__()
         if dropout_attn is None:
@@ -435,12 +435,12 @@ class TransformerDecoderLayer(nn.Module):
 
         # NOTE self attn between queries themself: use absolute euclid pos
         tgt2 = self.norm1(tgt)
-        q = k = self.with_pos_embed(tgt2, query_pos)
+        q = k = self.with_pos_embed(tgt2, query_pos)    # 将query_pos embedding加到tgt2上
         tgt2 = self.self_attn(q, k, value=tgt2, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
         tgt = tgt + self.dropout1(tgt2)
         tgt2 = self.norm2(tgt)
 
-        # NOTE cross attn between queries and contexst: use relative pos
+        # NOTE cross attn between queries and contexts: use relative pos
         n_queries, n_context, batch, channel = relative_pos.shape
         tgt2_expand = tgt2[:, None, :, :].repeat(1, n_context, 1, 1)
 

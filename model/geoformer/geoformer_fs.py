@@ -392,15 +392,15 @@ class GeoFormerFS(nn.Module):
             output_feats = output_feats.contiguous()
 
             mask_indices = torch.nonzero(support_mask == 1).view(-1)
-            output_feats_ = output_feats[mask_indices]
+            output_feats_ = output_feats[mask_indices]  # masked pooling
             locs_float_ = locs_float[mask_indices]
 
             batch_idxs_ = batch_idxs[mask_indices]
-            batch_offsets_ = utils.get_batch_offsets(batch_idxs_, batch_size)
+            batch_offsets_ = utils.get_batch_offsets(batch_idxs_, batch_size)   # 重新处理batch_offsets得到pooling后的结果
 
             support_embeddings = []
             for b in range(batch_size):
-                start = batch_offsets_[b]
+                start = batch_offsets_[b]   # 用的都是pooling后的结果
                 end = batch_offsets_[b + 1]
 
                 locs_float_b = locs_float_[start:end, :].unsqueeze(0)
@@ -409,11 +409,11 @@ class GeoFormerFS(nn.Module):
 
                 context_locs_b, grouped_features, grouped_xyz, pre_enc_inds = self.set_aggregator.group_points(
                     locs_float_b.contiguous(), output_feats_b.transpose(1, 2).contiguous(), npoint_new=32
-                )
+                )   # 对support实例的点做进一步的grouping？
                 context_feats_b = self.set_aggregator.mlp(grouped_features, grouped_xyz, pooling="avg")
                 context_feats_b = context_feats_b.transpose(1, 2)  # 1 x n_point x channel
 
-                support_embedding = torch.mean(context_feats_b, dim=1)  # channel
+                support_embedding = torch.mean(context_feats_b, dim=1)  # channel   average pooling
                 support_embeddings.append(support_embedding)
             support_embeddings = torch.cat(support_embeddings)  # batch x channel
             return support_embeddings
@@ -457,7 +457,7 @@ class GeoFormerFS(nn.Module):
 
             outputs["semantic_scores"] = semantic_scores
 
-            if cfg.train_fold == cfg.cvfold:
+            if cfg.train_fold == cfg.cvfold:    # 提取foreground points，依据是什么？
                 fg_condition = semantic_preds >= 4
             else:
                 fg_condition = semantic_preds == 3
@@ -484,22 +484,22 @@ class GeoFormerFS(nn.Module):
                 outputs["mask_predictions"] = None
                 return outputs
 
-            context_locs, context_feats, pre_enc_inds = contexts
+            context_locs, context_feats, pre_enc_inds = contexts    # 这些context和support set完全没有关系？
 
             # NOTE get queries
-            query_locs = context_locs[:, : cfg.n_query_points, :]
+            query_locs = context_locs[:, : cfg.n_query_points, :]   # 每个scene直接取context的前128个得到anchor
 
             # NOTE process geodist
             geo_dists = cal_geodesic_vectorize(
                 self.geo_knn,
-                pre_enc_inds,
-                locs_float_,
+                pre_enc_inds,   # context points索引
+                locs_float_,    # FG点坐标
                 batch_offsets_,
                 max_step=128 if self.training else 256,
                 neighbor=64,
                 radius=0.05,
                 n_queries=cfg.n_query_points,
-            )
+            )   # geo_dists[i]记录第i个scene中的anchor points到其他点的geo_distance
 
             self.cache_data = (
                 context_locs,
@@ -525,22 +525,22 @@ class GeoFormerFS(nn.Module):
         if support_embeddings is None:
             support_embeddings = self.process_support(support_dict, training)  # batch x channel
 
-        # NOTE aggregate support and query feats
+        # NOTE aggregate support and query feats    这里对应3.2节的计算
         channel_wise_tensor = context_feats * support_embeddings.unsqueeze(1).repeat(1, cfg.n_decode_point, 1)
         subtraction_tensor = context_feats - support_embeddings.unsqueeze(1).repeat(1, cfg.n_decode_point, 1)
         aggregation_tensor = torch.cat(
             [channel_wise_tensor, subtraction_tensor, context_feats], dim=2
         )  # batch * n_sampling *(3*channel)
 
-        # NOTE transformer decoder
+        # NOTE transformer decoder  这里对应3.4节
         dec_outputs = self.forward_decoder(
             context_locs, aggregation_tensor, query_locs, pc_dims, geo_dists, pre_enc_inds
-        )
+        )   # context就是context points，query就是anchor points
 
         if not training:
             dec_outputs = dec_outputs[-1:, ...]
 
-        # NOTE dynamic convolution
+        # NOTE dynamic convolution  这里对应3.5节
         mask_predictions = self.get_mask_prediction(
             geo_dists, dec_outputs, mask_features_, locs_float_, query_locs, batch_offsets_
         )
@@ -670,11 +670,11 @@ class GeoFormerFS(nn.Module):
 
         geo_dist_context = []
         for b in range(batch_size):
-            geo_dist_context_b = geo_dists[b][:, pre_enc_inds[b].long()]  # n_queries x n_contexts
+            geo_dist_context_b = geo_dists[b][:, pre_enc_inds[b].long()]  # n_queries x n_contexts  geo_dists本来包含的是anchor到所有fg点的距离，这里提取为到context点的距离
             geo_dist_context.append(geo_dist_context_b)
 
         geo_dist_context = torch.stack(geo_dist_context, dim=0)  # b x n_queries x n_contexts
-        max_geo_dist_context = torch.max(geo_dist_context, dim=2)[0]  # b x n_queries
+        max_geo_dist_context = torch.max(geo_dist_context, dim=2)[0]  # b x n_queries   每个anchor point到距离最远的context point的距离
         max_geo_val = torch.max(max_geo_dist_context)
         max_geo_dist_context[max_geo_dist_context < 0] = max_geo_val  # NOTE assign very big value to invalid queries
 
@@ -682,9 +682,9 @@ class GeoFormerFS(nn.Module):
             batch_size, n_queries, n_contexts, 3
         )  # b x n_queries x n_contexts x 3
 
-        geo_dist_context = geo_dist_context[:, :, :, None].repeat(1, 1, 1, 3)
+        geo_dist_context = geo_dist_context[:, :, :, None].repeat(1, 1, 1, 3)   # b x n_quries x n_contexts x 3
 
-        cond = geo_dist_context < 0
+        cond = geo_dist_context < 0     # 这些都是invalid的位置
         geo_dist_context[cond] = max_geo_dist_context[cond] + relative_coords[cond]
 
         relative_embedding_pos = self.pos_embedding(
@@ -695,18 +695,18 @@ class GeoFormerFS(nn.Module):
             n_queries,
             n_contexts,
         )
-        relative_embedding_pos = relative_embedding_pos.permute(2, 3, 0, 1)
+        relative_embedding_pos = relative_embedding_pos.permute(2, 3, 0, 1) # n_queries x n_contexts x batch x channel
 
         # num_layers x n_queries x batch x channel
         dec_outputs = self.decoder(
-            tgt=dec_inputs,
-            memory=context_feats,
-            pos=context_embedding_pos,
-            query_pos=query_embedding_pos,
-            relative_pos=relative_embedding_pos,
+            tgt=dec_inputs,                         # n_queries x batch x channel -> anchor points
+            memory=context_feats,                   # n_contexts x batch x channel -> context points
+            pos=context_embedding_pos,              # n_contexts x batch x channel
+            query_pos=query_embedding_pos,          # n_queries x batch x channel
+            relative_pos=relative_embedding_pos,    # n_queries x n_contexts x batch x channel
         )
 
-        return dec_outputs
+        return dec_outputs # num_layers x n_queries x batch x channel 每一层对应一次后面的mask预测（通过dynamic conv生成）
 
     def get_similarity(
         self, mask_logit_final, batch_offsets_, locs_float_, output_feats_, support_embeddings, pre_enc_inds_mask=None

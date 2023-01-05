@@ -124,22 +124,22 @@ class FSInstSetCriterion(nn.Module):
             negative_inds = []
             scene_instance_labels_b_ = instance_masked[batch_ids == b]  # n_mask
             mask_logits_b = mask_logits[b].clone().detach()
-            mask_logits_b = (mask_logits_b.sigmoid() > 0.5).long()
+            mask_logits_b = (mask_logits_b.sigmoid() > 0.5).long()  # 对每个anchor point，标注其他点是否与其属于同一个实例预测
             for n in range(cfg.n_query_points):
                 mask_logits_b_n = mask_logits_b[n].long()  # n_mask
-                mask_points = torch.nonzero(mask_logits_b_n).squeeze(-1)
+                mask_points = torch.nonzero(mask_logits_b_n).squeeze(-1)    # 预测的第n个anchor point对应的实例点idx
                 if len(mask_points) == 0:
                     num_negative += 1
                     negative_inds.append(n)
                     continue
 
-                inst_label = torch.mode(scene_instance_labels_b_[mask_points])[0].item()
-                if inst_label == -100:
+                inst_label = torch.mode(scene_instance_labels_b_[mask_points])[0].item()    # 用mask_points从gt中取点，定义众数为坐标
+                if inst_label == -100:  # 如果众数是-100，说明这个预测很糟糕
                     num_negative += 1
                     negative_inds.append(n)
                     continue
 
-                mask_logits_label = (scene_instance_labels_b_ == inst_label).long()
+                mask_logits_label = (scene_instance_labels_b_ == inst_label).long()     # gt中编号为inst_label的实例对应的真实的点对应1，其余对应0
                 intersection = ((mask_logits_b_n + mask_logits_label) > 1).long().sum()
                 union = ((mask_logits_b_n + mask_logits_label) > 0).long().sum()
                 iou = torch.true_divide(intersection, union)
@@ -151,12 +151,12 @@ class FSInstSetCriterion(nn.Module):
                     num_negative += 1
                     negative_inds.append(n)
 
-            if num_negative > cfg.negative_ratio * num_positive:
+            if num_negative > cfg.negative_ratio * num_positive:        # n_hard_negatives记录每个scene的预测为negative的情况，如果过高就用两倍positive
                 n_hard_negatives[b] = cfg.negative_ratio * num_positive
             else:
                 n_hard_negatives[b] = num_negative
 
-            train_label[b, positive_inds] = 1
+            train_label[b, positive_inds] = 1       # train_label中为1的部分表示该anchor是positive的
             # print('train_label', train_label)
         if train_label.sum() == 0:
             return torch.tensor(0.0, requires_grad=True).to(similarity_score.device)
@@ -166,15 +166,15 @@ class FSInstSetCriterion(nn.Module):
 
         loss_pos = loss_all * train_label
 
-        loss_neg[train_label.long()] = 0
-        loss_neg, _ = loss_neg.sort(dim=1, descending=True)
+        loss_neg[train_label.long() == 1] = 0 
+        loss_neg, _ = loss_neg.sort(dim=1, descending=True)     # 排序是方便后续利用n_hard_negatives确定的hard_negatives数量来得到loss_hard_nagetive
 
         hardness_ranks = (
             torch.LongTensor(range(cfg.n_query_points)).unsqueeze(0).expand_as(loss_neg).cuda()
         )  # (N, 8732)
         hard_negatives = hardness_ranks < n_hard_negatives.unsqueeze(1)  # (N, 8732)
         loss_hard_neg = loss_neg[hard_negatives]
-        similarity_loss = (loss_hard_neg.sum() + loss_pos.sum()) / train_label.sum().float()
+        similarity_loss = (loss_hard_neg.sum() + loss_pos.sum()) / train_label.sum().float()    # 返回hard_negative预测的loss和positive预测的loss之和除以
 
         return similarity_loss
 
@@ -192,7 +192,7 @@ class FSInstSetCriterion(nn.Module):
         num_gt = 0
         for batch in range(self.batch_size):
             mask_logit_b = mask_logits_list[batch]
-            similarity_score_b = similarity_score[batch]  # n_queries x n_classes
+            similarity_score_b = similarity_score[batch]  # n_queries
             instance_masked_b = instance_masked[batch_ids == batch]
             semantic_masked_b = semantic_masked[batch_ids == batch]
 
@@ -227,7 +227,7 @@ class FSInstSetCriterion(nn.Module):
 
         return loss, loss_dict, num_gt
 
-    def forward(self, model_outputs, batch_inputs, epoch):
+    def forward(self, model_outputs, batch_inputs, epoch):  # batch_inputs是query的gt值
         loss = torch.tensor(0.0, requires_grad=True).cuda()
         loss_dict_out = {}
 
@@ -237,7 +237,7 @@ class FSInstSetCriterion(nn.Module):
         instance_labels = batch_inputs["instance_labels"]
         semantic_labels = batch_inputs["labels"]
 
-        instance_masked = instance_labels[fg_idxs]
+        instance_masked = instance_labels[fg_idxs]  # gt
         semantic_masked = semantic_labels[fg_idxs]
 
         batch_ids = model_outputs["batch_idxs"]
@@ -256,14 +256,14 @@ class FSInstSetCriterion(nn.Module):
         main_loss, loss_dict, num_gt = self.single_layer_loss(
             mask_predictions[-1], similarity_score, instance_masked, semantic_masked, batch_ids, cal_match=True
         )
-        loss += main_loss
+        loss += main_loss           # decoder的最后一层预测对应的loss
 
         """ Auxilary loss """
         for l in range(cfg.dec_nlayers - 1):
             interm_loss, _, _ = self.single_layer_loss(
                 mask_predictions[l], similarity_score, instance_masked, semantic_masked, batch_ids
             )
-            loss += interm_loss
+            loss += interm_loss     # decoder的每一层的输出都计算一下loss
 
         loss_dict_out["focal_loss"] = (loss_dict["focal_loss"].item(), num_gt)
         loss_dict_out["dice_loss"] = (loss_dict["dice_loss"].item(), num_gt)
