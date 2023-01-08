@@ -648,8 +648,8 @@ class GeoFormerFS(nn.Module):
     def forward_decoder(self, context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds):
         batch_size = context_locs.shape[0]
 
-        context_embedding_pos = self.pos_embedding(context_locs, input_range=pc_dims)
-        context_feats = self.encoder_to_decoder_projection(context_feats.permute(0, 2, 1))  # batch x channel x npoints
+        context_embedding_pos = self.pos_embedding(context_locs, input_range=pc_dims)       # 用context_locs做embedding，提升维度到decoder channels 64维度
+        context_feats = self.encoder_to_decoder_projection(context_feats.permute(0, 2, 1))  # batch x channel x npoints 将维度转换到decoder channels
 
         """ Init dec_inputs by query features """
         query_embedding_pos = self.pos_embedding(query_locs, input_range=pc_dims)
@@ -662,7 +662,7 @@ class GeoFormerFS(nn.Module):
         query_embedding_pos = query_embedding_pos.permute(2, 0, 1)
         context_feats = context_feats.permute(2, 0, 1)
 
-        # Encode relative pos
+        # Encode relative pos   用GeoDistance作为relative positional embedding
         relative_coords = torch.abs(
             query_locs[:, :, None, :] - context_locs[:, None, :, :]
         )  # b x n_queries x n_contexts x 3
@@ -699,9 +699,9 @@ class GeoFormerFS(nn.Module):
 
         # num_layers x n_queries x batch x channel
         dec_outputs = self.decoder(
-            tgt=dec_inputs,                         # n_queries x batch x channel -> anchor points
-            memory=context_feats,                   # n_contexts x batch x channel -> context points
-            pos=context_embedding_pos,              # n_contexts x batch x channel
+            tgt=dec_inputs,                         # n_queries x batch x channel -> anchor points feature
+            memory=context_feats,                   # n_contexts x batch x channel -> context points feature
+            pos=context_embedding_pos,              # n_contexts x batch x channel  由context points的几何坐标做embedding得到
             query_pos=query_embedding_pos,          # n_queries x batch x channel
             relative_pos=relative_embedding_pos,    # n_queries x n_contexts x batch x channel
         )

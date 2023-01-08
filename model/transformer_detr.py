@@ -116,6 +116,7 @@ class TransformerDecoder(nn.Module):
         self,
         tgt,
         memory,
+        support = None,
         tgt_mask: Optional[Tensor] = None,
         memory_mask: Optional[Tensor] = None,
         tgt_key_padding_mask: Optional[Tensor] = None,
@@ -153,6 +154,22 @@ class TransformerDecoder(nn.Module):
                 intermediate.append(self.norm(output))
             # if return_attn_weights:
             #     attns.append(attn)
+
+        for layer in self.layers:
+            output, attn = layer(
+                output,
+                support,
+                tgt_mask=tgt_mask,
+                memory_mask=memory_mask,
+                tgt_key_padding_mask=tgt_key_padding_mask,
+                memory_key_padding_mask=memory_key_padding_mask,
+                pos=pos,
+                query_pos=query_pos,
+                relative_pos=relative_pos,
+                return_attn_weights=return_attn_weights,
+            )
+            if self.return_intermediate:
+                intermediate.append(self.norm(output)) 
 
         if self.norm is not None:
             output = self.norm(output)
