@@ -425,12 +425,21 @@ class GeoFormerFS(nn.Module):
         locs_float = scene_dict["locs_float"]
         batch_offsets = scene_dict["batch_offsets"]
 
+        support_batch_idxs = support_dict["locs"][:, 0].int()
+        support_locs_float = support_dict["locs_float"]
+        support_batch_offsets = support_dict["batch_offsets"]
+
         batch_size = len(batch_offsets) - 1
         assert batch_size > 0
 
         pc_dims = [
             scene_dict["pc_mins"],
             scene_dict["pc_maxs"],
+        ]
+
+        support_pc_dims = [
+            support_dict["pc_mins"],
+            support_dict["pc_maxs"]
         ]
 
         if remember:
@@ -454,21 +463,30 @@ class GeoFormerFS(nn.Module):
             outputs["semantic_scores"] = semantic_scores
         else:
             output_feats, semantic_scores, semantic_preds = self.forward_backbone(scene_dict, batch_size)
+            support_output_feats, _, support_semantic_preds = self.forward_backbone(support_dict, batch_size)
 
             outputs["semantic_scores"] = semantic_scores
 
             if cfg.train_fold == cfg.cvfold:    # 提取foreground points，依据是什么？
                 fg_condition = semantic_preds >= 4
+                support_fg_condition = support_semantic_preds >= 4
             else:
                 fg_condition = semantic_preds == 3
+                support_fg_condition = support_semantic_preds == 3
 
             fg_idxs = torch.nonzero(fg_condition).view(-1)
+            support_fg_idxs = torch.nonzero(support_fg_condition).view(-1)
 
             batch_idxs_ = batch_idxs[fg_idxs]
             batch_offsets_ = utils.get_batch_offsets(batch_idxs_, batch_size)
             locs_float_ = locs_float[fg_idxs]
             output_feats_ = output_feats[fg_idxs]
             semantic_preds_ = semantic_preds[fg_idxs]
+
+            support_batch_idxs_ = support_batch_idxs[support_fg_idxs]
+            support_batch_offsets_ = utils.get_batch_offsets(support_batch_idxs_, batch_size)
+            support_locs_float_ = support_locs_float[support_fg_idxs]
+            support_output_feats_ = support_output_feats[support_fg_idxs]
 
             context_mask_tower = (
                 torch.enable_grad if self.training and "mask_tower" not in self.fix_module else torch.no_grad
@@ -484,7 +502,10 @@ class GeoFormerFS(nn.Module):
                 outputs["mask_predictions"] = None
                 return outputs
 
-            context_locs, context_feats, pre_enc_inds = contexts    # 这些context和support set完全没有关系？
+            context_locs, context_feats, pre_enc_inds = contexts    # 这些context和support set没有直接关系
+
+            support_contexts = self.forward_aggregator(support_locs_float_, support_output_feats_, support_batch_offsets_, batch_size)
+            support_context_locs, support_context_feats, _ = support_contexts
 
             # NOTE get queries
             query_locs = context_locs[:, : cfg.n_query_points, :]   # 每个scene直接取context的前128个得到anchor
@@ -534,7 +555,7 @@ class GeoFormerFS(nn.Module):
 
         # NOTE transformer decoder  这里对应3.4节
         dec_outputs = self.forward_decoder(
-            context_locs, aggregation_tensor, query_locs, pc_dims, geo_dists, pre_enc_inds
+            context_locs, aggregation_tensor, query_locs, pc_dims, geo_dists, pre_enc_inds, support_context_locs, support_context_feats, support_pc_dims
         )   # context就是context points，query就是anchor points
 
         if not training:
@@ -645,11 +666,15 @@ class GeoFormerFS(nn.Module):
 
             return context_locs, context_feats, pre_enc_inds
 
-    def forward_decoder(self, context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds):
+    def forward_decoder(self, context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds, support_locs, support_feats, support_pc_dims):
         batch_size = context_locs.shape[0]
 
         context_embedding_pos = self.pos_embedding(context_locs, input_range=pc_dims)       # 用context_locs做embedding，提升维度到decoder channels 64维度
         context_feats = self.encoder_to_decoder_projection(context_feats.permute(0, 2, 1))  # batch x channel x npoints 将维度转换到decoder channels
+
+        support_embedding_pos = self.pos_embedding(support_locs, input_range=support_pc_dims)
+        support_feats = support_feats.repeat(1, 1, 3)
+        support_feats = self.encoder_to_decoder_projection(support_feats.permute(0, 2, 1))
 
         """ Init dec_inputs by query features """
         query_embedding_pos = self.pos_embedding(query_locs, input_range=pc_dims)
@@ -661,6 +686,9 @@ class GeoFormerFS(nn.Module):
         context_embedding_pos = context_embedding_pos.permute(2, 0, 1)
         query_embedding_pos = query_embedding_pos.permute(2, 0, 1)
         context_feats = context_feats.permute(2, 0, 1)
+
+        support_embedding_pos = support_embedding_pos.permute(2, 0, 1)
+        support_feats = support_feats.permute(2, 0, 1)
 
         # Encode relative pos   用GeoDistance作为relative positional embedding
         relative_coords = torch.abs(
@@ -704,6 +732,8 @@ class GeoFormerFS(nn.Module):
             pos=context_embedding_pos,              # n_contexts x batch x channel  由context points的几何坐标做embedding得到
             query_pos=query_embedding_pos,          # n_queries x batch x channel
             relative_pos=relative_embedding_pos,    # n_queries x n_contexts x batch x channel
+            support=support_feats,
+            support_pos=support_embedding_pos
         )
 
         return dec_outputs # num_layers x n_queries x batch x channel 每一层对应一次后面的mask预测（通过dynamic conv生成）

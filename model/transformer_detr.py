@@ -116,7 +116,7 @@ class TransformerDecoder(nn.Module):
         self,
         tgt,
         memory,
-        support = None,
+        support: Optional[Tensor] = None,
         tgt_mask: Optional[Tensor] = None,
         memory_mask: Optional[Tensor] = None,
         tgt_key_padding_mask: Optional[Tensor] = None,
@@ -126,6 +126,7 @@ class TransformerDecoder(nn.Module):
         relative_pos: Optional[Tensor] = None,
         transpose_swap: Optional[bool] = False,
         return_attn_weights: Optional[bool] = False,
+        support_pos: Optional[Tensor] = None
     ):
         if transpose_swap:
             bs, c, h, w = memory.shape
@@ -163,7 +164,7 @@ class TransformerDecoder(nn.Module):
                 memory_mask=memory_mask,
                 tgt_key_padding_mask=tgt_key_padding_mask,
                 memory_key_padding_mask=memory_key_padding_mask,
-                pos=pos,
+                pos=support_pos,
                 query_pos=query_pos,
                 relative_pos=relative_pos,
                 return_attn_weights=return_attn_weights,
@@ -174,8 +175,8 @@ class TransformerDecoder(nn.Module):
         if self.norm is not None:
             output = self.norm(output)
             if self.return_intermediate:
-                intermediate.pop()              # 移除当前最后一个中间结果
-                intermediate.append(output)     # 再将output添加至末尾
+                intermediate.pop()              
+                intermediate.append(output)     
 
         if self.return_intermediate:
             return torch.stack(intermediate)
