@@ -21,7 +21,7 @@ DETR:
   dec_nhead: 4
 
   n_downsampling: 20000
-  n_decode_point: 2048    # contexts size ?
+  n_decode_point: 2048    # contexts points num
   n_query_points: 128
 
   filter_biases_wd: False
