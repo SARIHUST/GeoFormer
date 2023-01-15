@@ -62,17 +62,27 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer):
             if torch.is_tensor(query_dict[key]):
                 query_dict[key] = query_dict[key].to(net_device)
 
-        outputs = model(support_dict, query_dict, remember=False, training=True)
+        outputs, loss, loss_dict = None, None, None
 
-        if "mask_predictions" not in outputs.keys() or outputs["mask_predictions"] is None:
+        try:
+            outputs = model(support_dict, query_dict, remember=False, training=True)
+
+            if "mask_predictions" not in outputs.keys() or outputs["mask_predictions"] is None:
+                continue
+
+            loss, loss_dict = criterion(outputs, query_dict, epoch)
+
+            # backward
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+        except RuntimeError as e:
+            print(repr(e))
+            del outputs, loss, loss_dict
+            torch.cuda.empty_cache()
+            time.sleep(1)
             continue
-
-        loss, loss_dict = criterion(outputs, query_dict, epoch)
-
-        # backward
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
 
         iter_time.update(time.time() - check_time)
         check_time = time.time()

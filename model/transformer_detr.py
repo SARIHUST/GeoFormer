@@ -166,7 +166,7 @@ class TransformerDecoder(nn.Module):
                 memory_key_padding_mask=memory_key_padding_mask,
                 pos=support_pos,
                 query_pos=query_pos,
-                relative_pos=relative_pos,
+                relative_pos=None,
                 return_attn_weights=return_attn_weights,
             )
             if self.return_intermediate:

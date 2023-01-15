@@ -427,7 +427,6 @@ class GeoFormerFS(nn.Module):
 
         support_batch_idxs = support_dict["locs"][:, 0].int()
         support_locs_float = support_dict["locs_float"]
-        support_batch_offsets = support_dict["batch_offsets"]
 
         batch_size = len(batch_offsets) - 1
         assert batch_size > 0
@@ -467,7 +466,7 @@ class GeoFormerFS(nn.Module):
 
             outputs["semantic_scores"] = semantic_scores
 
-            if cfg.train_fold == cfg.cvfold:    # 提取foreground points，依据是什么？
+            if cfg.train_fold == cfg.cvfold:    # 提取foreground points
                 fg_condition = semantic_preds >= 4
                 support_fg_condition = support_semantic_preds >= 4
             else:
