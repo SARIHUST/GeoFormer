@@ -542,6 +542,8 @@ class GeoFormerFS(nn.Module):
             outputs["proposal_scores"] = None
             return outputs
 
+        print('len(query_fg) = {}, len(support_fg) = {}'.format(len(fg_idxs), len(support_fg_idxs)))
+
         if support_embeddings is None:
             support_embeddings = self.process_support(support_dict, training)  # batch x channel
 
@@ -731,8 +733,8 @@ class GeoFormerFS(nn.Module):
             pos=context_embedding_pos,              # n_contexts x batch x channel  由context points的几何坐标做embedding得到
             query_pos=query_embedding_pos,          # n_queries x batch x channel
             relative_pos=relative_embedding_pos,    # n_queries x n_contexts x batch x channel
-            support=support_feats,
-            support_pos=support_embedding_pos
+            support=support_feats,                  # n_support x batch x channel   作为第二阶段的memory使用
+            support_pos=support_embedding_pos       # n_support x batch x channel   作为第二阶段的pos使用
         )
 
         return dec_outputs # num_layers x n_queries x batch x channel 每一层对应一次后面的mask预测（通过dynamic conv生成）
