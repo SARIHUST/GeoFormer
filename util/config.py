@@ -15,7 +15,7 @@ def get_parser():
     )
 
     # pretrain
-    parser.add_argument("--pretrain", type=str, default='GeoFormer/checkpoint_last.pth', help="path to pretrain model")
+    parser.add_argument("--pretrain", type=str, default=None, help="path to pretrain model")
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--threshold_ins", type=float, default=0.5)
     parser.add_argument("--min_pts_num", type=int, default=50)

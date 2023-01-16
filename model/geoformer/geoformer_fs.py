@@ -418,7 +418,175 @@ class GeoFormerFS(nn.Module):
             support_embeddings = torch.cat(support_embeddings)  # batch x channel
             return support_embeddings
 
+    def forward_fix_support(self, support_dict, scene_dict, training=True, remember=False, support_embeddings=None):
+        outputs = {}
+
+        batch_idxs = scene_dict["locs"][:, 0].int()
+        locs_float = scene_dict["locs_float"]
+        batch_offsets = scene_dict["batch_offsets"]
+
+        batch_size = len(batch_offsets) - 1
+        assert batch_size > 0
+
+        pc_dims = [
+            scene_dict["pc_mins"],
+            scene_dict["pc_maxs"],
+        ]
+
+        if remember:
+            (
+                context_locs,
+                context_feats,
+                pre_enc_inds,
+                fg_idxs,
+                batch_offsets,
+                output_feats_,
+                batch_idxs_,
+                locs_float_,
+                batch_offsets_,
+                semantic_preds_,
+                semantic_scores,
+                query_locs,
+                mask_features_,
+                geo_dists,
+            ) = self.cache_data
+
+            outputs["semantic_scores"] = semantic_scores
+        else:
+            output_feats, semantic_scores, semantic_preds = self.forward_backbone(scene_dict, batch_size)
+
+            outputs["semantic_scores"] = semantic_scores
+
+            if cfg.train_fold == cfg.cvfold:
+                fg_condition = semantic_preds >= 4
+            else:
+                fg_condition = semantic_preds == 3
+
+            fg_idxs = torch.nonzero(fg_condition).view(-1)
+            print('total num: {}, fg num: {}'.format(batch_idxs.shape, fg_idxs.shape))
+
+            batch_idxs_ = batch_idxs[fg_idxs]
+            batch_offsets_ = utils.get_batch_offsets(batch_idxs_, batch_size)
+            locs_float_ = locs_float[fg_idxs]
+            output_feats_ = output_feats[fg_idxs]
+            semantic_preds_ = semantic_preds[fg_idxs]
+
+            context_mask_tower = (
+                torch.enable_grad if self.training and "mask_tower" not in self.fix_module else torch.no_grad
+            )
+            with context_mask_tower():
+                mask_features_ = self.mask_tower(torch.unsqueeze(output_feats_, dim=2).permute(2, 1, 0)).permute(
+                    2, 1, 0
+                )
+
+            # NOTE aggregator
+            contexts = self.forward_aggregator(locs_float_, output_feats_, batch_offsets_, batch_size)
+            if contexts is None:
+                outputs["mask_predictions"] = None
+                return outputs
+
+            context_locs, context_feats, pre_enc_inds = contexts
+
+            # NOTE get queries
+            query_locs = context_locs[:, : cfg.n_query_points, :]
+
+            # NOTE process geodist
+            geo_dists = cal_geodesic_vectorize(
+                self.geo_knn,
+                pre_enc_inds,
+                locs_float_,
+                batch_offsets_,
+                max_step=128 if self.training else 256,
+                neighbor=64,
+                radius=0.05,
+                n_queries=cfg.n_query_points,
+            )
+
+            self.cache_data = (
+                context_locs,
+                context_feats,
+                pre_enc_inds,
+                fg_idxs,
+                batch_offsets,
+                output_feats_,
+                batch_idxs_,
+                locs_float_,
+                batch_offsets_,
+                semantic_preds_,
+                semantic_scores,
+                query_locs,
+                mask_features_,
+                geo_dists,
+            )
+
+        if len(fg_idxs) == 0:
+            outputs["proposal_scores"] = None
+            return outputs
+
+        if support_embeddings is None:
+            support_embeddings = self.process_support(support_dict, training)  # batch x channel
+
+        # NOTE aggregate support and query feats
+        channel_wise_tensor = context_feats * support_embeddings.unsqueeze(1).repeat(1, cfg.n_decode_point, 1)
+        subtraction_tensor = context_feats - support_embeddings.unsqueeze(1).repeat(1, cfg.n_decode_point, 1)
+        aggregation_tensor = torch.cat(
+            [channel_wise_tensor, subtraction_tensor, context_feats], dim=2
+        )  # batch * n_sampling *(3*channel)
+
+        # NOTE transformer decoder
+        dec_outputs = self.forward_decoder(
+            context_locs, aggregation_tensor, query_locs, pc_dims, geo_dists, pre_enc_inds
+        )
+
+        if not training:
+            dec_outputs = dec_outputs[-1:, ...]
+
+        # NOTE dynamic convolution
+        mask_predictions = self.get_mask_prediction(
+            geo_dists, dec_outputs, mask_features_, locs_float_, query_locs, batch_offsets_
+        )
+
+        mask_logit_final = mask_predictions[-1]["mask_logits"]
+
+        # NOTE check similarity between support and anchor
+        similarity_score, pre_enc_inds_mask = self.get_similarity(
+            mask_logit_final,
+            batch_offsets_,
+            locs_float_,
+            output_feats_,
+            support_embeddings,
+            pre_enc_inds_mask=self.cache_pre_enc_inds_mask if remember else None,
+        )
+        self.cache_pre_enc_inds_mask = pre_enc_inds_mask
+
+        if training:
+            outputs["fg_idxs"] = fg_idxs
+            outputs["num_insts"] = cfg.n_query_points * batch_size
+            outputs["batch_idxs"] = batch_idxs_
+            outputs["simnet"] = similarity_score
+            outputs["mask_predictions"] = mask_predictions
+
+            return outputs
+
+        similarity_score_sigmoid = similarity_score.detach().sigmoid()
+        scores_final, proposals_pred = self.generate_proposal(
+            mask_logit_final,
+            similarity_score_sigmoid,
+            fg_idxs,
+            batch_offsets,
+            logit_thresh=0.2,
+            score_thresh=cfg.TEST_SCORE_THRESH,
+            npoint_thresh=cfg.TEST_NPOINT_THRESH,
+            sim_score_thresh=cfg.similarity_thresh,
+        )
+        outputs["proposal_scores"] = (scores_final, proposals_pred)
+        return outputs
+
     def forward(self, support_dict, scene_dict, training=True, remember=False, support_embeddings=None):
+        
+        if not training and cfg.fix_support:
+            return self.forward_fix_support(support_dict, scene_dict, training, remember, support_embeddings)
+        
         outputs = {}
 
         batch_idxs = scene_dict["locs"][:, 0].int()
@@ -667,7 +835,73 @@ class GeoFormerFS(nn.Module):
 
             return context_locs, context_feats, pre_enc_inds
 
-    def forward_decoder(self, context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds, support_locs, support_feats, support_pc_dims):
+    def forward_decoder_fix_support(self, context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds):
+        batch_size = context_locs.shape[0]
+
+        context_embedding_pos = self.pos_embedding(context_locs, input_range=pc_dims)
+        context_feats = self.encoder_to_decoder_projection(context_feats.permute(0, 2, 1))  # batch x channel x npoints
+
+        """ Init dec_inputs by query features """
+        query_embedding_pos = self.pos_embedding(query_locs, input_range=pc_dims)
+        query_embedding_pos = self.query_projection(query_embedding_pos.float())
+
+        dec_inputs = context_feats[:, :, : cfg.n_query_points].permute(2, 0, 1)
+
+        # decoder expects: npoints x batch x channel
+        context_embedding_pos = context_embedding_pos.permute(2, 0, 1)
+        query_embedding_pos = query_embedding_pos.permute(2, 0, 1)
+        context_feats = context_feats.permute(2, 0, 1)
+
+        # Encode relative pos
+        relative_coords = torch.abs(
+            query_locs[:, :, None, :] - context_locs[:, None, :, :]
+        )  # b x n_queries x n_contexts x 3
+        n_queries, n_contexts = relative_coords.shape[1], relative_coords.shape[2]
+
+        geo_dist_context = []
+        for b in range(batch_size):
+            geo_dist_context_b = geo_dists[b][:, pre_enc_inds[b].long()]  # n_queries x n_contexts
+            geo_dist_context.append(geo_dist_context_b)
+
+        geo_dist_context = torch.stack(geo_dist_context, dim=0)  # b x n_queries x n_contexts
+        max_geo_dist_context = torch.max(geo_dist_context, dim=2)[0]  # b x n_queries
+        max_geo_val = torch.max(max_geo_dist_context)
+        max_geo_dist_context[max_geo_dist_context < 0] = max_geo_val  # NOTE assign very big value to invalid queries
+
+        max_geo_dist_context = max_geo_dist_context[:, :, None, None].expand(
+            batch_size, n_queries, n_contexts, 3
+        )  # b x n_queries x n_contexts x 3
+
+        geo_dist_context = geo_dist_context[:, :, :, None].repeat(1, 1, 1, 3)
+
+        cond = geo_dist_context < 0
+        geo_dist_context[cond] = max_geo_dist_context[cond] + relative_coords[cond]
+
+        relative_embedding_pos = self.pos_embedding(
+            geo_dist_context.reshape(batch_size, n_queries * n_contexts, -1), input_range=pc_dims
+        ).reshape(
+            batch_size,
+            -1,
+            n_queries,
+            n_contexts,
+        )
+        relative_embedding_pos = relative_embedding_pos.permute(2, 3, 0, 1)
+
+        # num_layers x n_queries x batch x channel
+        dec_outputs = self.decoder(
+            tgt=dec_inputs,
+            memory=context_feats,
+            pos=context_embedding_pos,
+            query_pos=query_embedding_pos,
+            relative_pos=relative_embedding_pos,
+        )
+
+        return dec_outputs
+
+    def forward_decoder(self, context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds, support_locs=None, support_feats=None, support_pc_dims=None):
+        if support_locs is None:
+            return self.forward_decoder_fix_support(context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds)
+        
         batch_size = context_locs.shape[0]
 
         context_embedding_pos = self.pos_embedding(context_locs, input_range=pc_dims)       # 用context_locs做embedding，提升维度到decoder channels 64维度
