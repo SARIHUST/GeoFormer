@@ -259,7 +259,7 @@ class FSInstSetCriterion(nn.Module):
         loss += main_loss           # decoder的最后一层预测对应的loss
 
         """ Auxilary loss """
-        for l in range(cfg.dec_nlayers - 1):
+        for l in range((cfg.dec_nlayers - 1) // 2):
             interm_loss, _, _ = self.single_layer_loss(
                 mask_predictions[l], similarity_score, instance_masked, semantic_masked, batch_ids
             )

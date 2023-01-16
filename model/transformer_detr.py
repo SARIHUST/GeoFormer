@@ -138,26 +138,23 @@ class TransformerDecoder(nn.Module):
         intermediate = []
         # attns = []
 
-        for layer in self.layers:
-            output, attn = layer(
-                output,
-                memory,
-                tgt_mask=tgt_mask,
-                memory_mask=memory_mask,
-                tgt_key_padding_mask=tgt_key_padding_mask,
-                memory_key_padding_mask=memory_key_padding_mask,
-                pos=pos,
-                query_pos=query_pos,
-                relative_pos=relative_pos,
-                return_attn_weights=return_attn_weights,
-            )
-            if self.return_intermediate:
-                intermediate.append(self.norm(output))
-            # if return_attn_weights:
-            #     attns.append(attn)
-
-        if support is not None:
-            for layer in self.layers:
+        for i, layer in enumerate(self.layers):
+            if i % 2 == 0:
+                output, attn = layer(
+                    output,
+                    memory,
+                    tgt_mask=tgt_mask,
+                    memory_mask=memory_mask,
+                    tgt_key_padding_mask=tgt_key_padding_mask,
+                    memory_key_padding_mask=memory_key_padding_mask,
+                    pos=pos,
+                    query_pos=query_pos,
+                    relative_pos=relative_pos,
+                    return_attn_weights=return_attn_weights,
+                )
+                if self.return_intermediate:
+                    intermediate.append(self.norm(output))
+            else:
                 output, attn = layer(
                     output,
                     support,
@@ -169,10 +166,7 @@ class TransformerDecoder(nn.Module):
                     query_pos=query_pos,
                     relative_pos=None,
                     return_attn_weights=return_attn_weights,
-                    is_support=True
                 )
-                if self.return_intermediate:
-                    intermediate.append(self.norm(output)) 
 
         if self.norm is not None:
             output = self.norm(output)
@@ -453,6 +447,8 @@ class TransformerDecoderLayer(nn.Module):
         return_attn_weights: Optional[bool] = False,
     ):
 
+        n_queries, n_context = tgt.shape[0], memory.shape[0]
+
         # NOTE self attn between queries themself: use absolute euclid pos
         tgt2 = self.norm1(tgt)
         q = k = self.with_pos_embed(tgt2, query_pos)    # 将query_pos embedding加到tgt2上
@@ -461,57 +457,21 @@ class TransformerDecoderLayer(nn.Module):
         tgt2 = self.norm2(tgt)
 
         # NOTE cross attn between queries and contexts: use relative pos
-        n_queries, n_context, batch, channel = relative_pos.shape
-        tgt2_expand = tgt2[:, None, :, :].repeat(1, n_context, 1, 1)
+        #      cross attn between queries and supports: don't use relative pos
 
+        tgt2_expand = tgt2[:, None, :, :].repeat(1, n_context, 1, 1)
         memory_expand = memory[None, :, :, :].repeat(n_queries, 1, 1, 1)
 
-        sim = self.attn_mlp(tgt2_expand - memory_expand + relative_pos)
+        if relative_pos is not None:
+            sim = self.attn_mlp(tgt2_expand - memory_expand + relative_pos)
+        else:
+            sim = self.attn_mlp(tgt2_expand - memory_expand)
         attn = F.softmax(sim / np.sqrt(sim.shape[-1]), dim=1)
 
-        v2 = self.v_mlp(memory_expand + relative_pos)
-        tgt = torch.einsum("qcbf,qcbf->qbf", attn, v2)  # n_queries, batch, channel
-        tgt = self.out_mlp(tgt)
-        ###########################################################################################
-
-        tgt = tgt + self.dropout2(tgt2)
-        tgt2 = self.norm3(tgt)
-        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt2))))
-        tgt = tgt + self.dropout3(tgt2)
-        if return_attn_weights:
-            return tgt, attn
-        return tgt, None
-
-    def forward_pre_support(
-        self,
-        tgt,
-        memory,
-        tgt_mask: Optional[Tensor] = None,
-        memory_mask: Optional[Tensor] = None,
-        tgt_key_padding_mask: Optional[Tensor] = None,
-        memory_key_padding_mask: Optional[Tensor] = None,
-        pos: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-        return_attn_weights: Optional[bool] = False,
-    ):
-
-        n_queries, n_context = tgt.shape[0], memory.shape[0]
-        # NOTE self attn between queries themself: use absolute euclid pos
-        tgt2 = self.norm1(tgt)
-        q = k = self.with_pos_embed(tgt2, query_pos)    # 将query_pos embedding加到tgt2上
-        tgt2 = self.self_attn(q, k, value=tgt2, attn_mask=tgt_mask, key_padding_mask=tgt_key_padding_mask)[0]
-        tgt = tgt + self.dropout1(tgt2)
-        tgt2 = self.norm2(tgt)
-
-        # NOTE cross attn between queries and contexts
-        tgt2_expand = tgt2[:, None, :, :].repeat(1, n_context, 1, 1)
-
-        memory_expand = memory[None, :, :, :].repeat(n_queries, 1, 1, 1)
-
-        sim = self.attn_mlp(tgt2_expand - memory_expand)
-        attn = F.softmax(sim / np.sqrt(sim.shape[-1]), dim=1)
-
-        v2 = self.v_mlp(memory_expand)
+        if relative_pos is not None:
+            v2 = self.v_mlp(memory_expand + relative_pos)
+        else:
+            v2 = self.v_mlp(memory_expand)
         tgt = torch.einsum("qcbf,qcbf->qbf", attn, v2)  # n_queries, batch, channel
         tgt = self.out_mlp(tgt)
         ###########################################################################################
@@ -536,19 +496,7 @@ class TransformerDecoderLayer(nn.Module):
         query_pos: Optional[Tensor] = None,
         relative_pos: Optional[Tensor] = None,
         return_attn_weights: Optional[bool] = False,
-        is_support=False
     ):
-        if is_support:  # No relative positional embedding (geodesic distance embedding)
-            return self.forward_pre_support(
-                tgt,
-                memory,
-                tgt_mask,
-                tgt_key_padding_mask,
-                memory_key_padding_mask,
-                pos,
-                query_pos,
-                return_attn_weights
-            )
         return self.forward_pre_rel(
             tgt,
             memory,
