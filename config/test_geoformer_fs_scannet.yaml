@@ -21,7 +21,7 @@ DETR:
   dec_ffn_dim: 64
   dec_dropout: 0.1
   dec_nhead: 4
-  use_rel: True # NOTE modify transformer to input relative pos of n_queires x n _context
+  use_rel: True # NOTE modify transformer to input relative pos of n_queires x n_context
 
 
   n_downsampling: 20000

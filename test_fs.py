@@ -174,6 +174,9 @@ def do_test(model, dataset):
                         support_embeddings=support_embeddings,
                     )
 
+                    if outputs["no_fg"]:
+                        break
+
                     if outputs["proposal_scores"] is None:
                         continue
                     scores_pred, proposals_pred = outputs["proposal_scores"]

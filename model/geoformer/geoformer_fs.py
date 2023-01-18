@@ -420,6 +420,7 @@ class GeoFormerFS(nn.Module):
 
     def forward(self, support_dict, scene_dict, training=True, remember=False, support_embeddings=None):
         outputs = {}
+        outputs["no_fg"] = False
 
         batch_idxs = scene_dict["locs"][:, 0].int()
         locs_float = scene_dict["locs_float"]
@@ -457,6 +458,10 @@ class GeoFormerFS(nn.Module):
                 query_locs,
                 mask_features_,
                 geo_dists,
+                support_fg_idxs,
+                support_context_locs,
+                support_context_feats,
+                support_pc_dims,
             ) = self.cache_data
 
             outputs["semantic_scores"] = semantic_scores
@@ -475,6 +480,10 @@ class GeoFormerFS(nn.Module):
 
             fg_idxs = torch.nonzero(fg_condition).view(-1)
             support_fg_idxs = torch.nonzero(support_fg_condition).view(-1)
+
+            if len(fg_idxs) == 0 or len(support_fg_idxs) == 0:
+                outputs["no_fg"] = True
+                return outputs
 
             batch_idxs_ = batch_idxs[fg_idxs]
             batch_offsets_ = utils.get_batch_offsets(batch_idxs_, batch_size)
@@ -536,13 +545,17 @@ class GeoFormerFS(nn.Module):
                 query_locs,
                 mask_features_,
                 geo_dists,
+                support_fg_idxs,
+                support_context_locs,
+                support_context_feats,
+                support_pc_dims
             )
 
         if len(fg_idxs) == 0:
             outputs["proposal_scores"] = None
             return outputs
 
-        print('len(query_fg) = {}, len(support_fg) = {}'.format(len(fg_idxs), len(support_fg_idxs)))
+        # print('len(query_fg) = {}, len(support_fg) = {}'.format(len(fg_idxs), len(support_fg_idxs)))
 
         if support_embeddings is None:
             support_embeddings = self.process_support(support_dict, training)  # batch x channel
