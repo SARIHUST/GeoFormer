@@ -18,6 +18,7 @@ from util.log import create_logger
 from util.utils_scheduler import adjust_learning_rate
 
 MLE_types = {}
+accumulation_step = 4
 
 def init():
     os.makedirs(cfg.exp_path, exist_ok=True)
@@ -45,6 +46,8 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer):
 
     start_time = time.time()
     check_time = time.time()
+
+    accumulate_idx = 0
 
     for iteration, batch in enumerate(train_loader):
         data_time.update(time.time() - check_time)
@@ -74,9 +77,14 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer):
             loss, loss_dict = criterion(outputs, query_dict, epoch)
 
             # backward
-            optimizer.zero_grad()
+            loss /= accumulation_step
             loss.backward()
-            optimizer.step()
+            accumulate_idx += 1
+            
+            # gradient accumulation
+            if (accumulate_idx + 1) % accumulation_step == 0:
+                optimizer.step()
+                optimizer.zero_grad()
             
         except RuntimeError as e:
             print(repr(e))

@@ -323,8 +323,8 @@ def assign_instances_for_scan(scene_name, pred_info, gt_ids):
                 + "(%d) vs #mesh vertices (%d)" % (len(pred_mask), len(gt_ids))
             )
         # convert to binary
-        pred_mask = np.not_equal(pred_mask, 0)
-        num = np.count_nonzero(pred_mask)
+        pred_mask = np.not_equal(pred_mask, 0)  # 将所有非0值视作1
+        num = np.count_nonzero(pred_mask)       # 当前预测object的点的数量
         if num < MIN_REGION_SIZES[0]:
             continue  # skip if empty
 

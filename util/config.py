@@ -11,7 +11,8 @@ import yaml
 def get_parser():
     parser = argparse.ArgumentParser(description="Point Cloud Segmentation")
     parser.add_argument(
-        "--config", type=str, default="GeoFormer/config/debug.yaml", help="path to config file"
+        # "--config", type=str, default="config/geoformer_fs_scannet.yaml", help="path to config file"
+        "--config", type=str, default="config/test_geoformer_fs_scannet_finetune.yaml", help="path to config file"
     )
 
     # pretrain
@@ -20,9 +21,9 @@ def get_parser():
     parser.add_argument("--threshold_ins", type=float, default=0.5)
     parser.add_argument("--min_pts_num", type=int, default=50)
 
-    parser.add_argument("--resume", type=str, default=None)
+    parser.add_argument("--resume", type=str, default="new_lr/checkpoint_epoch_200.pth")
     parser.add_argument("--output_path", type=str, default='debug_delete')
-    parser.add_argument("--train", default=True)
+    parser.add_argument("--train", default=False)
 
     args_cfg = parser.parse_args()
     assert args_cfg.config is not None

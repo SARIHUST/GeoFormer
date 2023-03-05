@@ -21,6 +21,28 @@ FOLD = {
 }
 
 FOLD0_NAME = ["cabinet", "bed", "chair", "door", "bookshelf", "counter", "desk", "curtain", "bathtub"]
+FOLD0_NAME_idx = [
+    2, "cabinet", 
+    3, "bed", 
+    4, "chair", 
+    7, "door", 
+    9, "bookshelf", 
+    11, "counter", 
+    12, "desk", 
+    13, "curtain", 
+    18, "bathtub"
+]
+FOLD1_NAME_idx = [
+    5, "otherfurniture",
+    6, "picture",
+    8, "refridgerator",
+    10, "shower curtain",
+    14, "sink",
+    15, "sofa",
+    16, "table",
+    17, "toilet",
+    19, "window",
+]
 FOLD1_NAME = [
     "otherfurniture",
     "picture",

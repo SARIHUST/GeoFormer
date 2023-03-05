@@ -8,7 +8,7 @@ import torch.optim as optim
 import util.utils as utils
 from checkpoint import align_and_update_state_dicts, checkpoint, strip_prefix_if_present
 from criterion_fs import FSInstSetCriterion
-from datasets.scannetv2_fs_inst import FSInstDataset
+from datasets.scannetv2_fscp_inst import FSCPInstDataset as FSInstDataset
 from model.geoformer.geoformer_fs import GeoFormerFS
 
 from tensorboardX import SummaryWriter
@@ -17,7 +17,6 @@ from util.dataloader_util import get_rank
 from util.log import create_logger
 from util.utils_scheduler import adjust_learning_rate
 
-MLE_types = {}
 
 def init():
     os.makedirs(cfg.exp_path, exist_ok=True)
@@ -77,16 +76,11 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+        
         except RuntimeError as e:
             print(repr(e))
-            for scene in scene_infos:
-                if MLE_types.get(scene["sampled_class"]) == None:
-                    MLE_types[scene["sampled_class"]] = 0
-                MLE_types[scene["sampled_class"]] += 1
-            logger.info(MLE_types)
             del outputs, loss, loss_dict
-            torch.cuda.empty_cache()
+            # torch.cuda.empty_cache()
             time.sleep(1)
             continue
 

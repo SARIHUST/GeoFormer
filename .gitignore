@@ -77,6 +77,11 @@ lib/spconv
 exp/
 results/
 pretrains/
-start_fs/
 test_fs/
 *.pth
+new_lr
+new_lr_finetune
+start_fs_1024_250000
+start_fs_2048_200000
+debug
+debug_delete

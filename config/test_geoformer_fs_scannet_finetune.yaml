@@ -10,6 +10,7 @@ META:
   k_shot: 1
   similarity_thresh: 0.2
   fix_support: False
+  negative_ratio: 2
   run_num: 1
   type_support: fullscene_fold
   file_support: support_vectors_df
@@ -77,13 +78,13 @@ TRAIN:
 
   fix_module: [
     input_conv, unet, output_layer, semantic, semantic_linear, 
-    set_aggregator,
-    similarity_net,
-    pos_embedding, 
-    mask_tower, controller,
-    encoder_to_decoder_projection, 
-    query_projection,
-    decoder
+    # set_aggregator,
+    # similarity_net,
+    # pos_embedding, 
+    # mask_tower, controller,
+    # encoder_to_decoder_projection, 
+    # query_projection,
+    # decoder
   ]
 
 

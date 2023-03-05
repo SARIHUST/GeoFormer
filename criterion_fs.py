@@ -228,6 +228,7 @@ class FSInstSetCriterion(nn.Module):
         return loss, loss_dict, num_gt
 
     def forward(self, model_outputs, batch_inputs, epoch):  # batch_inputs是query的gt值
+        a = torch.tensor(0.0, requires_grad=False).cuda()
         loss = torch.tensor(0.0, requires_grad=True).cuda()
         loss_dict_out = {}
 

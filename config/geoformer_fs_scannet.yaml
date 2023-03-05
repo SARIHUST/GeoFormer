@@ -22,7 +22,7 @@ DETR:
   dec_nhead: 4
 
   n_downsampling: 20000
-  n_decode_point: 1024  # original 2048
+  n_decode_point: 2048  # original 2048
   n_query_points: 128
 
   filter_biases_wd: False
@@ -45,7 +45,7 @@ DATA:
   batch_size: 2
   full_scale: [128, 512]
   full_scale_support: [64, 128]
-  max_npoint: 250000
+  max_npoint: 200000  # original 250000
   mode: 4 # 4=mean
 
 STRUCTURE:
@@ -59,10 +59,10 @@ STRUCTURE:
 TRAIN:
   start_epoch: 0
   prepare_epochs: 0
-  epochs: 200
+  epochs: 300
   num_workers: 4 # data loader workers
   optim: Adam # Adam or SGD
-  lr: 0.005
+  lr: 0.008 # original 0.005
   step_epoch: 384
   multiplier: 0.5
   momentum: 0.9

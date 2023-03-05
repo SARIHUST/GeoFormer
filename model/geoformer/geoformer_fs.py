@@ -481,7 +481,7 @@ class GeoFormerFS(nn.Module):
             fg_idxs = torch.nonzero(fg_condition).view(-1)
             support_fg_idxs = torch.nonzero(support_fg_condition).view(-1)
 
-            if len(fg_idxs) == 0 or len(support_fg_idxs) == 0:
+            if len(fg_idxs) <= 1 or len(support_fg_idxs) <= 1:
                 outputs["no_fg"] = True
                 return outputs
 
@@ -502,7 +502,7 @@ class GeoFormerFS(nn.Module):
             with context_mask_tower():
                 mask_features_ = self.mask_tower(torch.unsqueeze(output_feats_, dim=2).permute(2, 1, 0)).permute(
                     2, 1, 0
-                )
+                )   # 这里mask_tower需要output_feats_中的点的数量超过1
 
             # NOTE aggregator
             contexts = self.forward_aggregator(locs_float_, output_feats_, batch_offsets_, batch_size)

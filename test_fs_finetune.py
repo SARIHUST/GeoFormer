@@ -11,11 +11,13 @@ from checkpoint import align_and_update_state_dicts, strip_prefix_if_present
 from datasets.scannetv2 import BENCHMARK_SEMANTIC_LABELS
 
 from model.geoformer.geoformer_fs import GeoFormerFS
-from datasets.scannetv2_fs_inst import FSInstDataset
+from datasets.scannetv2_fs_finetune_inst import FSInstDataset
 from lib.pointgroup_ops.functions import pointgroup_ops
 from util.log import create_logger
 from util.utils_3d import load_ids, non_max_suppression_gpu
 
+from criterion_fs import FSInstSetCriterion
+import torch.optim as optim
 
 def init():
     os.makedirs(cfg.exp_path, exist_ok=True)
@@ -28,7 +30,6 @@ def init():
     np.random.seed(cfg.test_seed)
     torch.manual_seed(cfg.test_seed)
     torch.cuda.manual_seed_all(cfg.test_seed)
-
 
 def load_set_support(model, dataset):
     set_support_name = cfg.type_support + str(cfg.cvfold) + "_" + str(cfg.k_shot) + "shot_10sets.pth"
@@ -118,7 +119,7 @@ def load_set_support(model, dataset):
     return set_support_vectors
 
 
-def do_test(model, dataset):
+def do_test(model, dataset, criterion, state_dict):
     model.eval()
     net_device = next(model.parameters()).device
 
@@ -131,14 +132,18 @@ def do_test(model, dataset):
 
     zero_instance_types = {}
 
-    with torch.no_grad():
-
+    # with torch.no_grad():
+    if True:
+    
         gt_file_arr = []
         test_scene_name_arr = []
         pred_info_arr = [[] for idx in range(cfg.run_num)]
 
         start_time = time.time()
         for i, batch_input in enumerate(dataloader):
+            # if i < 148:
+            #     print(i + 1)
+            #     continue
             nclusters = [0] * cfg.run_num
             clusters = [[] for idx in range(cfg.run_num)]
             cluster_scores = [[] for idx in range(cfg.run_num)]
@@ -156,14 +161,34 @@ def do_test(model, dataset):
                 if torch.is_tensor(query_dict[key]):
                     query_dict[key] = query_dict[key].to(net_device)
 
-            remain = False
             for j, (label, support_dict) in enumerate(zip(active_label, list_support_dicts)):
+
+                model.load_state_dict(state_dict)
+                finetune_model = model
+                finetune_model.train()
+                optimizer = optim.Adam(finetune_model.parameters(), lr=cfg.finetune_lr)
+                for key in support_dict:
+                    if torch.is_tensor(support_dict[key]):
+                        support_dict[key] = support_dict[key].to(net_device)
+                for fi in range(30):
+                    finetune_outputs = finetune_model(
+                        support_dict,
+                        support_dict,
+                        training=True,
+                        remember=False,
+                    )
+                    if finetune_outputs["no_fg"]:
+                        break
+                    if not finetune_outputs.get("mask_predictions"):
+                        print("why")
+                    loss, loss_dict = criterion(finetune_outputs, support_dict, epoch=500)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    print("iter: {}, loss: {}".format(fi, loss))
+                    del loss, finetune_outputs, loss_dict
+
                 for k in range(cfg.run_num):  # NOTE number of runs
-                    remember = False if (j == 0 and k == 0) else True
-                    if remain:
-                        remain = False
-                        remember = False
-                    remember = False    # 全部的support_dict都要利用
 
                     support_embeddings = None
                     if cfg.fix_support: # 即如果使用固定的support set，就会将预先计算好的support feature载入
@@ -174,16 +199,17 @@ def do_test(model, dataset):
                             if torch.is_tensor(support_dict[key]):
                                 support_dict[key] = support_dict[key].to(net_device)
 
-                    outputs = model(
-                        support_dict,
-                        query_dict,
-                        training=False,
-                        remember=remember,
-                        support_embeddings=support_embeddings,
-                    )
+                    with torch.no_grad():
+                        finetune_model.eval()
+                        outputs = finetune_model(
+                            support_dict,
+                            query_dict,
+                            training=False,
+                            remember=False,
+                            support_embeddings=support_embeddings,
+                        )
 
                     if outputs["no_fg"]:
-                        remain = True
                         break
 
                     if outputs["proposal_scores"] is None:
@@ -311,9 +337,14 @@ if __name__ == "__main__":
         raise RuntimeError
 
     dataset = FSInstDataset(split_set="val")
+    
+    criterion = FSInstSetCriterion()
+    criterion = criterion.cuda()
 
     # evaluate
     do_test(
         model,
         dataset,
+        criterion,
+        model_state_dict,
     )

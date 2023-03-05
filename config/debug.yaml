@@ -1,7 +1,8 @@
 GENERAL:
   task: train  # train, test
   manual_seed: 123
-  dataset_dir: GeoFormer/data/scannetv2_inst.py
+  model_dir: model/pointgroup/pointgroup.py
+  dataset_dir: data/scannetv2_inst.py
 
 META:
   train_fold: 0
@@ -10,18 +11,18 @@ META:
   k_shot: 1
   similarity_thresh: 0.2
   fix_support: False
-  negative_ratio: 2     # 控制negative anchor的比例
+  negative_ratio: 2
 
 DETR:
 
-  dec_nlayers: 4
+  dec_nlayers: 7  # context, support, context, ..., context
   dec_dim: 64
   dec_ffn_dim: 64
   dec_dropout: 0.1
   dec_nhead: 4
 
   n_downsampling: 20000
-  n_decode_point: 2048    # contexts points num
+  n_decode_point: 1024  # original 2048
   n_query_points: 128
 
   filter_biases_wd: False
@@ -41,7 +42,7 @@ DATA:
 
   input_channel: 3
   scale: 50   # voxel_size = 1 / scale, scale 50(2cm)
-  batch_size: 4
+  batch_size: 2
   full_scale: [128, 512]
   full_scale_support: [64, 128]
   max_npoint: 250000
@@ -66,7 +67,7 @@ TRAIN:
   multiplier: 0.5
   momentum: 0.9
   weight_decay: 0.0001
-  save_freq: 4  # also eval_freq
+  save_freq: 1  # also eval_freq
   save_freq_last: 1
 
   fix_module: [
