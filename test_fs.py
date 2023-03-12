@@ -14,7 +14,7 @@ from model.geoformer.geoformer_fs import GeoFormerFS
 from datasets.scannetv2_fs_inst import FSInstDataset
 from lib.pointgroup_ops.functions import pointgroup_ops
 from util.log import create_logger
-from util.utils_3d import load_ids, non_max_suppression_gpu
+from util.utils_3d import load_ids, non_max_suppression_gpu, matrix_non_max_suppression
 
 
 def init():
@@ -193,7 +193,7 @@ def do_test(model, dataset):
                         continue
 
                     benchmark_label = BENCHMARK_SEMANTIC_LABELS[label]
-                    cluster_semantic = torch.ones((proposals_pred.shape[0], 1)) * benchmark_label
+                    cluster_semantic = torch.ones((proposals_pred.shape[0])).cuda() * benchmark_label
 
                     clusters[k].append(proposals_pred)
                     cluster_scores[k].append(scores_pred)
@@ -217,15 +217,21 @@ def do_test(model, dataset):
                 if cluster_scores[k].shape[0] == 0:
                     pick_idxs_cluster = np.empty(0)
                 else:
-                    clusters_f = clusters[k].float()  # (nProposal, N), float, cuda
-                    intersection = torch.mm(clusters_f, clusters_f.t())  # (nProposal, nProposal), float, cuda
-                    clusters_pointnum = clusters_f.sum(1)  # (nProposal), float, cuda
-                    clusters_pn_h = clusters_pointnum.unsqueeze(-1).repeat(1, clusters_pointnum.shape[0])
-                    clusters_pn_v = clusters_pointnum.unsqueeze(0).repeat(clusters_pointnum.shape[0], 1)
-                    cross_ious = intersection / (clusters_pn_h + clusters_pn_v - intersection)
-                    pick_idxs_cluster = non_max_suppression_gpu(
-                        cross_ious, cluster_scores[k], cfg.TEST_NMS_THRESH
-                    )  # int, (nCluster, N)
+                    # clusters_f = clusters[k].float()  # (nProposal, N), float, cuda
+                    # intersection = torch.mm(clusters_f, clusters_f.t())  # (nProposal, nProposal), float, cuda
+                    # clusters_pointnum = clusters_f.sum(1)  # (nProposal), float, cuda
+                    # clusters_pn_h = clusters_pointnum.unsqueeze(-1).repeat(1, clusters_pointnum.shape[0])
+                    # clusters_pn_v = clusters_pointnum.unsqueeze(0).repeat(clusters_pointnum.shape[0], 1)
+                    # cross_ious = intersection / (clusters_pn_h + clusters_pn_v - intersection)
+                    # pick_idxs_cluster = non_max_suppression_gpu(
+                    #     cross_ious, cluster_scores[k], cfg.TEST_NMS_THRESH
+                    # )  # int, (nCluster, N)
+                    pick_idxs_cluster = matrix_non_max_suppression(
+                        clusters[k].float(),
+                        cluster_scores[k],
+                        cluster_semantic_id[k],
+                        final_score_thresh=0.5
+                    )
 
                 clusters[k] = clusters[k][pick_idxs_cluster].cpu().numpy()
                 cluster_scores[k] = cluster_scores[k][pick_idxs_cluster].cpu().numpy()

@@ -50,7 +50,7 @@ def train_one_epoch(epoch, train_loader, model, criterion, optimizer, scaler):
         current_iter = (epoch - 1) * num_iter + iteration + 1
         remain_iter = max_iter - current_iter
 
-        if epoch > cfg.prepare_epochs:
+        if epoch > cfg.prepare_epochs:  # prepare_epochs is 0, always go through adjust_learning_rate
             curr_lr = adjust_learning_rate(optimizer, current_iter / max_iter, cfg.epochs)
         else:
             curr_lr = cosine_lr_after_step(optimizer, cfg.lr, epoch, cfg.prepare_epochs, cfg.epochs)

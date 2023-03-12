@@ -61,7 +61,7 @@ TRAIN:
   start_epoch: 0
   prepare_epochs: 0
 
-  epochs: 100
+  epochs: 20
   num_workers: 4 # data loader workers
   optim: Adam # Adam or SGD
   lr: 0.005 # original 0.005

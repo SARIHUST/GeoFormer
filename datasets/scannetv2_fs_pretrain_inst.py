@@ -22,8 +22,8 @@ from util.config import cfg
 
 from .scannetv2 import FOLD
 
-# 以train_fs对应的情况为例进行分析
-class FSCPInstDataset:
+
+class FSPretrainInstDataset:
     def __init__(self, split_set="train"):
         self.data_root = cfg.data_root
         self.dataset = cfg.dataset
@@ -398,6 +398,7 @@ class FSCPInstDataset:
         xyz -= xyz.min(0)
         return xyz_middle, xyz, rgb, label, instance_label
 
+    # NOTE In the few-shot pretraining stage, we use the support set as the query set
     def trainMergeFS(self, ids):
         support_locs = []
         support_locs_float = []
@@ -420,7 +421,6 @@ class FSCPInstDataset:
         query_pc_maxs = []
         scene_infos = []
 
-        total_inst_num = 0
         # total_inst_num = 0    本来query_instance_label是增加total_inst_num的，但是这个值从来不改变，没有用，感觉应当是query_total_inst_num
         for idx, id in enumerate(ids):  # ids中的索引无效，需要确定sampled_class之后重新选择scene
             sampled_class = random.choice(self.SEMANTIC_LABELS)
@@ -440,210 +440,71 @@ class FSCPInstDataset:
 
                 support_mask = support_instance_label == support_instance_id    # support_scene中只标出一个sampled_class对应的物体，其余即使是同一语义标签的物体也会被mask掉
 
-                if np.count_nonzero(support_mask) <= 100:
-                    continue
-                
-                # 利用support_mask将support scene中的support instance提取出来
-                inst_xyz_middle = support_xyz_middle[support_mask]
-                inst_xyz_scaled = support_xyz_scaled[support_mask]
-                inst_rgb = support_rgb[support_mask]
-                inst_label = support_label[support_mask]
-                inst_instance_label = support_instance_label[support_mask]
-                inst_id = support_instance_label.max() + 1
-                inst_point_num = sum(support_mask)      # 实例点的数量
-
-                query_scene_name = support_scene_name   # query scene和support scene一样
-
-                query_xyz_middle, query_xyz_scaled, query_rgb, query_label, query_instance_label = self.load_single(
-                    query_scene_name, aug=False, permutate=False, val=False, support=False
-                )   # 获取单个query scene对应的数据
-
-                min_middle, max_middle = query_xyz_middle.min(0), query_xyz_middle.max(0)
-                range_middle = max_middle - min_middle
-                min_scaled, max_scaled = query_xyz_scaled.min(0), query_xyz_scaled.max(0)
-                range_scaled = max_scaled - min_scaled
-
-                # determine the bounding box of the full scene
-                support_pcd = o3d.geometry.PointCloud()
-                support_pcd.points = o3d.utility.Vector3dVector(support_xyz_middle)
-                abbox = support_pcd.get_axis_aligned_bounding_box()
-                
-                add_num = 0
-
-                for i in range(1):
-                    appropriate = False
-                    for j in range(20):                # 设定尝试轮数
-                        rot = R.random().as_matrix()                # 随机旋转矩阵
-                        # from math import sqrt
-                        # rot = np.array([
-                        #     [sqrt(3) / 2, 0.5, 0],
-                        #     [-0.5, sqrt(3) / 2, 0],
-                        #     [0, 0, 1]])
-                        offset_ratio = np.random.uniform(0, 1, 3)    # 随机位移比例
-                        add_inst_middle = np.dot(inst_xyz_middle, rot)
-                        add_inst_scaled = np.dot(inst_xyz_scaled, rot)
-                        inst_mean_middle = add_inst_middle.mean(0)                  # 粗略质心位置
-                        inst_mean_scaled = add_inst_scaled.mean(0)
-                        random_middle = offset_ratio * range_middle + min_middle    # 新的质心位置
-                        random_scaled = offset_ratio * range_scaled + min_scaled
-                        offset_middle = random_middle - inst_mean_middle            # 计算平移距离
-                        offset_scaled = random_scaled - inst_mean_scaled
-                        add_inst_middle += offset_middle
-                        add_inst_scaled += offset_scaled
-                        # add_inst_middle += 10000
-                        # add_inst_scaled += 1000000
-
-                        # use open3d to check if the added instance is appropriate, only check middle version as the two are homothetic
-                        add_inst_pcd = o3d.geometry.PointCloud()                
-                        add_inst_pcd.points = o3d.utility.Vector3dVector(add_inst_middle)
-                        inst_bbox = add_inst_pcd.get_oriented_bounding_box()
-                        query_pcd = o3d.geometry.PointCloud()
-                        query_pcd.points = o3d.utility.Vector3dVector(query_xyz_middle)
-
-                        point_num_outside = inst_point_num - len(abbox.get_point_indices_within_bounding_box(add_inst_pcd.points))
-                        # if point_num_outside > 0.05 * inst_point_num:
-                        #     continue
-                        point_num_conflict = len(inst_bbox.get_point_indices_within_bounding_box(query_pcd.points))
-                        if point_num_conflict > 0.01 * inst_point_num:
-                            print('comeon', j)
-                            continue
-                        appropriate = True
-                        print('great')
-                        break
-
-                    if appropriate:         # 说明能够在self.max_tryout轮中找到一个合适位置
-                        add_num += 1
-                    else:
-                        break               # 说明在self.max_tryout轮中没有找到一个合适的位置放置物体
-
-                    add_inst_rgb = deepcopy(inst_rgb)
-                    # add_inst_rgb[:, 0] = 1
-                    # add_inst_rgb[:, 1:] = -1
-                    add_inst_label = deepcopy(inst_label)
-                    add_inst_id = i + inst_id
-                    add_inst_instance_label = np.ones_like(inst_instance_label) * add_inst_id
-
-                    query_xyz_middle = np.concatenate((query_xyz_middle, add_inst_middle))
-                    query_xyz_scaled = np.concatenate((query_xyz_scaled, add_inst_scaled))
-                    query_rgb = np.concatenate((query_rgb, add_inst_rgb))
-                    query_label = np.concatenate((query_label, add_inst_label))
-                    query_instance_label = np.concatenate((query_instance_label, add_inst_instance_label))
-                
-                # 只有当add_num与所需要的copy_num相等的时候这个support-query scene才是可以使用的，最后跳出while循环
-                if add_num == 1:
-                    # permute_idx = np.random.permutation(query_xyz_middle.shape[0])  # 随机重排点云，打乱最后增加的物体的索引
-                    # query_xyz_middle = query_xyz_middle[permute_idx]
-                    # query_xyz_scaled = query_xyz_scaled[permute_idx]
-                    # query_rgb = query_rgb[permute_idx]
-                    # query_label = query_label[permute_idx]
-                    # query_instance_label = query_instance_label[permute_idx]
-
-                    # from .scannetv2 import FOLD0_NAME     # 查看copy paste效果
-                    # idx2label = {}
-                    # for i in range(len(FOLD0_NAME)):
-                    #     idx2label[self.SEMANTIC_LABELS[i]] = FOLD0_NAME[i]
-                    # torch.save(
-                    #     [support_xyz_middle, support_xyz_scaled, support_rgb, support_label, support_instance_label, support_mask],
-                    #     'download/support_' + support_scene_name + '_{}.pth'.format(idx2label[sampled_class])
-                    # )
-                    # torch.save(
-                    #     [query_xyz_middle, query_xyz_scaled, query_rgb],
-                    #     'download/query_' + query_scene_name + '_{}.pth'.format(idx2label[sampled_class])
-                    # )
-                    # torch.save(
-                    #     [support_xyz_middle, support_rgb, support_mask, query_xyz_middle, query_rgb],
-                    #     'download/' + support_scene_name + '_{}.pth'.format(idx2label[sampled_class])
-                    # )
-
-                    # # use support as query
-                    # query_xyz_middle, query_xyz_scaled, query_rgb, query_label, query_instance_label = self.load_single(
-                    #     support_scene_name, aug=False, permutate=False, val=False, support=False
-                    # )   # 获取单个query scene对应的数据
-
-                    query_label = query_label == sampled_class  # 只区分sample_class点与其他点
-                    query_instance_label[(query_label == 0).nonzero()] = -100   # 把所有不是sample_class的点的实例标签修改为-100
-                    query_instance_label = self.getCroppedInstLabel(query_instance_label, valid_idxs=None)
-
-                    query_inst_num, inst_infos = self.getInstanceInfo(query_xyz_middle, query_instance_label.astype(np.int32))
-                    query_inst_pointnum = inst_infos["instance_pointnum"]  # (nInst), list -> 每个实例对应的点的个数
-
-                    query_instance_label[np.where(query_instance_label != -100)] += total_inst_num
-                    query_total_inst_num += query_inst_num      # 为集合一个batch做准备
-
-                    support_batch_offsets.append(support_batch_offsets[-1] + support_xyz_scaled.shape[0])
-                    support_locs.append(
-                        torch.cat(
-                            [
-                                torch.LongTensor(support_xyz_scaled.shape[0], 1).fill_(idx),
-                                torch.from_numpy(support_xyz_scaled).long(),
-                            ],
-                            1,
-                        )
-                    )
-                    support_locs_float.append(torch.from_numpy(support_xyz_middle))
-                    support_feats.append(torch.from_numpy(support_rgb))
-                    support_masks.append(torch.from_numpy(support_mask))
-
-                    support_pc_mins.append(torch.from_numpy(support_xyz_middle.min(axis=0)))
-                    support_pc_maxs.append(torch.from_numpy(support_xyz_middle.max(axis=0)))
-
-                    query_batch_offsets.append(query_batch_offsets[-1] + query_xyz_scaled.shape[0])
-                    query_locs.append(
-                        torch.cat(
-                            [
-                                torch.LongTensor(query_xyz_scaled.shape[0], 1).fill_(idx),
-                                torch.from_numpy(query_xyz_scaled).long(),
-                            ],
-                            1,
-                        )
-                    )
-                    query_locs_float.append(torch.from_numpy(query_xyz_middle))
-                    query_feats.append(torch.from_numpy(query_rgb))
-                    query_labels.append(torch.from_numpy(query_label))
-                    query_instance_labels.append(torch.from_numpy(query_instance_label))
-                    # query_instance_infos.append(torch.from_numpy(query_inst_infos))
-                    query_instance_pointnum.extend(query_inst_pointnum)
-
-                    query_pc_mins.append(torch.from_numpy(query_xyz_middle.min(axis=0)))
-                    query_pc_maxs.append(torch.from_numpy(query_xyz_middle.max(axis=0)))
-
-                    torch.save([support_xyz_middle, support_rgb, query_xyz_middle, query_rgb], 'pack_{}.pth'.format(idx))
-
-                    scene_infos.append(
-                        {
-                            "sampled_class": sampled_class,
-                            "query_scene": query_scene_name,
-                            "support_scene": support_scene_name,
-                            "support_instance_id": support_instance_id,
-                        }
-                    )       # 为每个query-support对构建infos字典，默认使用1-shot
+                if np.count_nonzero(support_mask) > 100:
+                # if np.count_nonzero(support_label) > 100: 这里前面没有处理过support_label，这样这个判断是没有意义的，应当改为support_mask
                     break
+            
+            # compute the query data for this scene
+            query_scene_name = support_scene_name
+            query_xyz_middle, query_xyz_scaled, query_rgb, query_label, query_instance_label = self.load_single(
+                query_scene_name, aug=True, permutate=True, val=False
+            )
+            
+            query_label = query_label == sampled_class
+            query_instance_label[(query_label == 0).nonzero()] = -100
+            query_instance_label = self.getCroppedInstLabel(query_instance_label, valid_idxs=None)
+            query_inst_num, inst_infos = self.getInstanceInfo(query_xyz_middle, query_instance_label.astype(np.int32))
+            query_inst_pointnum = inst_infos["instance_pointnum"]  # (nInst), list
 
-            # support_batch_offsets.append(support_batch_offsets[-1] + support_xyz_scaled.shape[0])
-            # support_locs.append(
-            #     torch.cat(
-            #         [
-            #             torch.LongTensor(support_xyz_scaled.shape[0], 1).fill_(idx),
-            #             torch.from_numpy(support_xyz_scaled).long(),
-            #         ],
-            #         1,
-            #     )
-            # )
-            # support_locs_float.append(torch.from_numpy(support_xyz_middle))
-            # support_feats.append(torch.from_numpy(support_rgb))
-            # support_masks.append(torch.from_numpy(support_mask))
+            query_instance_label[np.where(query_instance_label != -100)] += query_total_inst_num  # 最终要按一个batch形成一个整体，后续的scene中的编号需要一次递增
+            query_total_inst_num += query_inst_num
 
-            # support_pc_mins.append(torch.from_numpy(support_xyz_middle.min(axis=0)))
-            # support_pc_maxs.append(torch.from_numpy(support_xyz_middle.max(axis=0)))
+            query_batch_offsets.append(query_batch_offsets[-1] + query_xyz_scaled.shape[0])     # 计算batch中各个scene点的数量的前缀和
+            query_locs.append(
+                torch.cat(
+                    [
+                        torch.LongTensor(query_xyz_scaled.shape[0], 1).fill_(idx),
+                        torch.from_numpy(query_xyz_scaled).long(),
+                    ],
+                    1,
+                )
+            )   # query_locs[idx]表示的是该batch中第idx个scene的xyz_scaled数据，在最前面增加一列全为idx的用来表示索引
+            query_locs_float.append(torch.from_numpy(query_xyz_middle))
+            query_feats.append(torch.from_numpy(query_rgb))
+            query_labels.append(torch.from_numpy(query_label))
+            query_instance_labels.append(torch.from_numpy(query_instance_label))
+            # query_instance_infos.append(torch.from_numpy(query_inst_infos))
+            query_instance_pointnum.extend(query_inst_pointnum)
 
-            # scene_infos.append(
-            #     {
-            #         "sampled_class": sampled_class,
-            #         "query_scene": support_scene_name,
-            #         "support_scene": support_scene_name,
-            #         "support_instance_id": support_instance_id,
-            #     }
-            # )
+            query_pc_mins.append(torch.from_numpy(query_xyz_middle.min(axis=0)))
+            query_pc_maxs.append(torch.from_numpy(query_xyz_middle.max(axis=0)))
+
+            # compute the support data for this scene
+            support_batch_offsets.append(support_batch_offsets[-1] + support_xyz_scaled.shape[0])
+            support_locs.append(
+                torch.cat(
+                    [
+                        torch.LongTensor(support_xyz_scaled.shape[0], 1).fill_(idx),
+                        torch.from_numpy(support_xyz_scaled).long(),
+                    ],
+                    1,
+                )
+            )
+            support_locs_float.append(torch.from_numpy(support_xyz_middle))
+            support_feats.append(torch.from_numpy(support_rgb))
+            support_masks.append(torch.from_numpy(support_mask))
+
+            support_pc_mins.append(torch.from_numpy(support_xyz_middle.min(axis=0)))
+            support_pc_maxs.append(torch.from_numpy(support_xyz_middle.max(axis=0)))
+
+            scene_infos.append(
+                {
+                    "sampled_class": sampled_class,
+                    "query_scene": query_scene_name,
+                    "support_scene": support_scene_name,
+                    "support_instance_id": support_instance_id,
+                }
+            )
 
         support_batch_offsets = torch.tensor(support_batch_offsets, dtype=torch.int)  # int (B+1)
         support_locs = torch.cat(support_locs, 0)  # long (N, 1 + 3), the batch item idx is put in locs[:, 0]

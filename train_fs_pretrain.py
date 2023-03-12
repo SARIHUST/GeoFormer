@@ -8,7 +8,7 @@ import torch.optim as optim
 import util.utils as utils
 from checkpoint import align_and_update_state_dicts, checkpoint, strip_prefix_if_present
 from criterion_fs import FSInstSetCriterion
-from datasets.scannetv2_fscp_inst import FSCPInstDataset as FSInstDataset
+from datasets.scannetv2_fs_pretrain_inst import FSPretrainInstDataset as FSInstDataset
 from model.geoformer.geoformer_fs import GeoFormerFS
 
 from tensorboardX import SummaryWriter

@@ -85,3 +85,8 @@ start_fs_1024_250000
 start_fs_2048_200000
 debug
 debug_delete
+pretrain
+after_pretrain
+bs_4
+bs_4_100
+mod_lr_40_rounds

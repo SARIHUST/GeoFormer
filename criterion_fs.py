@@ -117,6 +117,8 @@ class FSInstSetCriterion(nn.Module):
     def sim_loss(self, similarity_score, instance_masked, mask_logits, batch_ids):
         train_label = torch.zeros((self.batch_size, self.n_queries)).cuda()
         n_hard_negatives = torch.zeros(self.batch_size).cuda()
+
+        total_negative_inds = 0
         for b in range(self.batch_size):
             num_positive = 0
             num_negative = 0
@@ -155,6 +157,8 @@ class FSInstSetCriterion(nn.Module):
                 n_hard_negatives[b] = cfg.negative_ratio * num_positive
             else:
                 n_hard_negatives[b] = num_negative
+
+            total_negative_inds += num_negative
 
             train_label[b, positive_inds] = 1       # train_label中为1的部分表示该anchor是positive的
             # print('train_label', train_label)
