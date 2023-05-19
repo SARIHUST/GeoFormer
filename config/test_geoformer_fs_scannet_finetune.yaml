@@ -15,6 +15,7 @@ META:
   type_support: fullscene_fold
   file_support: support_vectors_df
   test_model: geoformer
+  ablation_use_geo: True
 
 DETR:
   dec_nlayers: 7

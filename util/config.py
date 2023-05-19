@@ -11,7 +11,8 @@ import yaml
 def get_parser():
     parser = argparse.ArgumentParser(description="Point Cloud Segmentation")
     parser.add_argument(
-        "--config", type=str, default="config/geoformer_fs_scannet.yaml", help="path to config file"
+        "--config", type=str, default="config/debug.yaml", help="path to config file"
+        # "--config", type=str, default="config/geoformer_fs_scannet.yaml", help="path to config file"
         # "--config", type=str, default="config/test_geoformer_fs_scannet_finetune.yaml", help="path to config file"
     )
 

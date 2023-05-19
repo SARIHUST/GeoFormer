@@ -12,6 +12,7 @@ META:
   similarity_thresh: 0.2
   fix_support: False
   negative_ratio: 2
+  ablation_use_geo: True
 
 DETR:
 
@@ -34,7 +35,7 @@ DETR:
   lr_scheduler: cosine
   
 DATA:
-  data_root: GeoFormer/data
+  data_root: data
   dataset: scannetv2
 
   classes: 13

@@ -147,3 +147,61 @@ def print_error(message, user_fault=False):
     if user_fault:
         sys.exit(2)
     sys.exit(-1)
+
+def farthest_point_sampling(points, n_sample):
+    """
+    param:
+        points: (B, N, D) D -> 1, 2, 3 dimentional points
+        n_sample: number of points to sample
+    the first point sampled is the one farthest from the centroid
+    """
+    device = points.device
+    B, N, _ = points.shape
+    sampled_idxs = torch.zeros((B, n_sample), dtype=int)
+    distance = (torch.ones((B, N)) * 1e10).to(device)
+    split_batch = torch.arange(B)
+    centeroid = torch.sum(points, 1) / N
+    centeroid = centeroid.unsqueeze(1)  # (B, 1, D)
+    dist = torch.sum((points - centeroid) ** 2, -1) # the distance of every point to the centroid
+    idx_s = torch.argmax(dist, 1)
+
+    for i in range(n_sample):
+        sampled_idxs[:, i] = idx_s
+        loc = points[split_batch, idx_s, :].unsqueeze(1)
+        dist = torch.sum((points - loc) ** 2, -1)           # compute distance to the new sampled point
+        update = dist < distance
+        distance[update] = dist[update]                     # update all distances
+        idx_s = torch.argmax(distance, -1)
+
+    # sampled_points = torch.zeros((B, n_sample, 3))
+    # for i in range(B):
+    #     sampled_points[i] = points[i][sampled_idxs[i]]
+
+    # return sampled_points.to(device)
+    return sampled_idxs
+
+
+def fps(points, n_sample):
+    """
+    param:
+        points: (B, N, D) D -> 1, 2, 3 dimentional points
+        n_sample: number of points to sample
+    the first point sampled is the one farthest from the centroid
+    """
+    device = points.device
+    B, N, _ = points.shape
+    sampled_idxs = torch.zeros((B, n_sample), dtype=int)
+    distance = (torch.ones((B, N)) * 1e10).to(device)
+    split_batch = torch.arange(B)
+    centeroid = torch.sum(points, 1) / N
+    centeroid = centeroid.unsqueeze(1)  # (B, 1, D)
+    dist = torch.sum((points - centeroid) ** 2, -1) # the distance of every point to the centroid
+    idx_s = torch.argmax(dist, 1)
+    for i in range(n_sample):
+        sampled_idxs[:, i] = idx_s
+        loc = points[split_batch, idx_s, :].unsqueeze(1)
+        dist = torch.sum((points - loc) ** 2, -1)           # compute distance to the new sampled point
+        update = dist < distance
+        distance[update] = dist[update]                     # update all distances
+        idx_s = torch.argmax(distance, -1)
+    return sampled_idxs

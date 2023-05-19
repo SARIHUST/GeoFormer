@@ -12,6 +12,7 @@ META:
   similarity_thresh: 0.2
   fix_support: False
   negative_ratio: 2
+  ablation_use_geo: True
 
 DETR:
 
@@ -69,7 +70,7 @@ TRAIN:
   multiplier: 0.5
   momentum: 0.9
   weight_decay: 0.0001
-  save_freq: 5  # also eval_freq
+  save_freq: 10  # also eval_freq
   save_freq_last: 1
 
   fix_module: [

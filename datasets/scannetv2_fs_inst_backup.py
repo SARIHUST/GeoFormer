@@ -125,11 +125,8 @@ class FSInstDataset:
                     continue
 
                 for l in active_label:
-                    l_support_tuples = []
-                    for k in range(cfg.run_num):
-                        support_tuple = random.choice(self.class2instances[l])
-                        l_support_tuples.append(support_tuple)
-                    test_combs[file_name][l] = l_support_tuples
+                    support_tuple = random.choice(self.class2instances[l])
+                    test_combs[file_name][l] = support_tuple
 
             with open(test_combs_file, "wb") as f:
                 pickle.dump(test_combs, f, pickle.HIGHEST_PROTOCOL)
@@ -624,65 +621,60 @@ class FSInstDataset:
         else:
             list_support_dicts = []
             for l in test_comb["active_label"]:
-                l_support_tuples = test_comb[l]
-                l_support_dicts = []
-                for k in range(cfg.run_num):
-                    support_tuple = l_support_tuples[k]
-                    support_scene_name, support_instance_id = support_tuple[0], support_tuple[1]
-                    scene_infos[l] = support_tuple
+                support_tuple = test_comb[l]
+                support_scene_name, support_instance_id = support_tuple[0], support_tuple[1]
+                scene_infos[l] = support_tuple
 
-                    (
-                        support_xyz_middle,
-                        support_xyz_scaled,
-                        support_rgb,
-                        support_label,
-                        support_instance_label,
-                    ) = self.load_single_block(
-                        support_scene_name, support_instance_id, aug=False, permutate=False, val=True
-                    )
+                (
+                    support_xyz_middle,
+                    support_xyz_scaled,
+                    support_rgb,
+                    support_label,
+                    support_instance_label,
+                ) = self.load_single_block(
+                    support_scene_name, support_instance_id, aug=False, permutate=False, val=True
+                )
 
-                    support_mask = (support_instance_label == support_instance_id).astype(int)
+                support_mask = (support_instance_label == support_instance_id).astype(int)
 
-                    support_pc_min = torch.from_numpy(support_xyz_middle.min(axis=0)).unsqueeze(0)
-                    support_pc_max = torch.from_numpy(support_xyz_middle.max(axis=0)).unsqueeze(0)
+                support_pc_min = torch.from_numpy(support_xyz_middle.min(axis=0)).unsqueeze(0)
+                support_pc_max = torch.from_numpy(support_xyz_middle.max(axis=0)).unsqueeze(0)
 
-                    support_batch_offsets = torch.tensor([0, support_xyz_middle.shape[0]], dtype=torch.int)
-                    support_masks_offset = torch.tensor([0, np.count_nonzero(support_mask)], dtype=torch.int)  # int (B+1)
-                    support_locs = torch.cat(
-                        [
-                            torch.LongTensor(support_xyz_scaled.shape[0], 1).fill_(0),
-                            torch.from_numpy(support_xyz_scaled).long(),
-                        ],
-                        1,
-                    )
-                    support_locs_float = torch.from_numpy(support_xyz_middle).to(torch.float32)
-                    support_feats = torch.from_numpy(support_rgb).to(torch.float32)  # float (N, C)
-                    support_masks = torch.from_numpy(support_mask)
-                    support_spatial_shape = np.clip(
-                        (support_locs.max(0)[0][1:] + 1).numpy(), cfg.full_scale_support[0], None
-                    )
+                support_batch_offsets = torch.tensor([0, support_xyz_middle.shape[0]], dtype=torch.int)
+                support_masks_offset = torch.tensor([0, np.count_nonzero(support_mask)], dtype=torch.int)  # int (B+1)
+                support_locs = torch.cat(
+                    [
+                        torch.LongTensor(support_xyz_scaled.shape[0], 1).fill_(0),
+                        torch.from_numpy(support_xyz_scaled).long(),
+                    ],
+                    1,
+                )
+                support_locs_float = torch.from_numpy(support_xyz_middle).to(torch.float32)
+                support_feats = torch.from_numpy(support_rgb).to(torch.float32)  # float (N, C)
+                support_masks = torch.from_numpy(support_mask)
+                support_spatial_shape = np.clip(
+                    (support_locs.max(0)[0][1:] + 1).numpy(), cfg.full_scale_support[0], None
+                )
 
-                    # voxelize
-                    support_voxel_locs, support_p2v_map, support_v2p_map = pointgroup_ops.voxelization_idx(
-                        support_locs, 1, self.mode
-                    )
+                # voxelize
+                support_voxel_locs, support_p2v_map, support_v2p_map = pointgroup_ops.voxelization_idx(
+                    support_locs, 1, self.mode
+                )
 
-                    support_dict = {
-                        "voxel_locs": support_voxel_locs,
-                        "p2v_map": support_p2v_map,
-                        "v2p_map": support_v2p_map,
-                        "locs": support_locs,
-                        "locs_float": support_locs_float,
-                        "feats": support_feats,
-                        "support_masks": support_masks,
-                        "spatial_shape": support_spatial_shape,
-                        "batch_offsets": support_batch_offsets,
-                        "mask_offsets": support_masks_offset,
-                        "pc_mins": support_pc_min,
-                        "pc_maxs": support_pc_max,
-                    }
-                    l_support_dicts.append(support_dict)
-
-                list_support_dicts.append(l_support_dicts)
+                support_dict = {
+                    "voxel_locs": support_voxel_locs,
+                    "p2v_map": support_p2v_map,
+                    "v2p_map": support_v2p_map,
+                    "locs": support_locs,
+                    "locs_float": support_locs_float,
+                    "feats": support_feats,
+                    "support_masks": support_masks,
+                    "spatial_shape": support_spatial_shape,
+                    "batch_offsets": support_batch_offsets,
+                    "mask_offsets": support_masks_offset,
+                    "pc_mins": support_pc_min,
+                    "pc_maxs": support_pc_max,
+                }
+                list_support_dicts.append(support_dict)
 
         return True, list_support_dicts, query_dict, scene_infos

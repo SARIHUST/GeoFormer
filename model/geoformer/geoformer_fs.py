@@ -239,7 +239,7 @@ class GeoFormerFS(nn.Module):
         return scores_final, proposals_pred
 
     def parse_dynamic_params(self, params, out_channels):
-        assert params.dim() == 2
+        assert params.dim() == 2    # params: n_queries * c
         assert len(self.weight_nums) == len(self.bias_nums)
         assert params.size(1) == sum(self.weight_nums) + sum(self.bias_nums)
 
@@ -268,11 +268,10 @@ class GeoFormerFS(nn.Module):
         n_mask = mask_features.size(0)
         x = mask_features.permute(2, 1, 0).repeat(num_insts, 1, 1)  # num_inst * c * N_mask
 
-        geo_dist = geo_dist.cuda()
-
         relative_coords = fps_sampling_coords[:, None, :] - coords_[None, :, :]  # N_inst * N_mask * 3
 
         if use_geo:
+            geo_dist = geo_dist.cuda()
             n_queries, n_contexts = geo_dist.shape[:2]
             max_geo_dist_context = torch.max(geo_dist, dim=1)[0]  # n_queries
             max_geo_val = torch.max(max_geo_dist_context)
@@ -336,7 +335,10 @@ class GeoFormerFS(nn.Module):
                 locs_float_b = locs_float_[start:end, :]
                 fps_sampling_locs_b = fps_sampling_locs[b]
 
-                geo_dist = geo_dists[b]
+                if cfg.ablation_use_geo:
+                    geo_dist = geo_dists[b]
+                else:
+                    geo_dist = None
 
                 # mask_logits = self.mask_heads_forward(
                 #     geo_dist,
@@ -357,7 +359,7 @@ class GeoFormerFS(nn.Module):
                         n_queries,
                         locs_float_b,
                         fps_sampling_locs_b,
-                        use_geo=True,
+                        use_geo=cfg.ablation_use_geo,
                     )
 
                 mask_logits = mask_logits.float()
@@ -515,7 +517,7 @@ class GeoFormerFS(nn.Module):
             with context_mask_tower():
                 mask_features_ = self.mask_tower(torch.unsqueeze(output_feats_, dim=2).permute(2, 1, 0)).permute(
                     2, 1, 0
-                )   # 这里mask_tower需要output_feats_中的点的数量超过1
+                )   # 这里mask_tower需要output_feats_中的点的数量超过1  
 
             # NOTE aggregator
             contexts = self.forward_aggregator(locs_float_, output_feats_, batch_offsets_, batch_size)
@@ -531,17 +533,20 @@ class GeoFormerFS(nn.Module):
             # NOTE get queries
             query_locs = context_locs[:, : cfg.n_query_points, :]   # 每个scene直接取context的前128个得到anchor
 
-            # NOTE process geodist
-            geo_dists = cal_geodesic_vectorize(
-                self.geo_knn,
-                pre_enc_inds,   # context points索引
-                locs_float_,    # FG点坐标
-                batch_offsets_,
-                max_step=128 if self.training else 256,
-                neighbor=64,
-                radius=0.05,
-                n_queries=cfg.n_query_points,
-            )   # geo_dists[i]记录第i个scene中的anchor points到其他点的geo_distance
+            if cfg.ablation_use_geo:
+                # NOTE process geodist
+                geo_dists = cal_geodesic_vectorize(
+                    self.geo_knn,
+                    pre_enc_inds,   # context points索引
+                    locs_float_,    # FG点坐标
+                    batch_offsets_,
+                    max_step=128 if self.training else 256,
+                    neighbor=64,
+                    radius=0.05,
+                    n_queries=cfg.n_query_points,
+                )   # geo_dists[i]记录第i个scene中的anchor points到其他点的geo_distance
+            else:
+                geo_dists = None
 
             self.cache_data = (
                 context_locs,
@@ -591,11 +596,12 @@ class GeoFormerFS(nn.Module):
             else:
                 # NOTE downsample to avoid OOM
                 idxs_subsample, idxs_subsample_raw = random_downsample(batch_offsets_, batch_size, n_subsample=40000)
-                geo_dists2 = []
-                for b in range(batch_size):
-                    geo_dists2.append(geo_dists[b][:, idxs_subsample_raw[b]])
-                del geo_dists
-                geo_dists = geo_dists2
+                if cfg.ablation_use_geo:
+                    geo_dists2 = []
+                    for b in range(batch_size):
+                        geo_dists2.append(geo_dists[b][:, idxs_subsample_raw[b]])
+                    del geo_dists
+                    geo_dists = geo_dists2
 
                 fg_idxs = fg_idxs[idxs_subsample]
                 mask_features_ = mask_features_[idxs_subsample, :]
@@ -730,34 +736,37 @@ class GeoFormerFS(nn.Module):
         )  # b x n_queries x n_contexts x 3
         n_queries, n_contexts = relative_coords.shape[1], relative_coords.shape[2]
 
-        geo_dist_context = []
-        for b in range(batch_size):
-            geo_dist_context_b = geo_dists[b][:, pre_enc_inds[b].long()]  # n_queries x n_contexts  geo_dists本来包含的是anchor到所有fg点的距离，这里提取为到context点的距离
-            geo_dist_context.append(geo_dist_context_b)
+        if cfg.ablation_use_geo:
+            geo_dist_context = []
+            for b in range(batch_size):
+                geo_dist_context_b = geo_dists[b][:, pre_enc_inds[b].long()]  # n_queries x n_contexts  geo_dists本来包含的是anchor到所有fg点的距离，这里提取为到context点的距离
+                geo_dist_context.append(geo_dist_context_b)
 
-        geo_dist_context = torch.stack(geo_dist_context, dim=0)  # b x n_queries x n_contexts
-        max_geo_dist_context = torch.max(geo_dist_context, dim=2)[0]  # b x n_queries   每个anchor point到距离最远的context point的距离
-        max_geo_val = torch.max(max_geo_dist_context)
-        max_geo_dist_context[max_geo_dist_context < 0] = max_geo_val  # NOTE assign very big value to invalid queries
+            geo_dist_context = torch.stack(geo_dist_context, dim=0)  # b x n_queries x n_contexts
+            max_geo_dist_context = torch.max(geo_dist_context, dim=2)[0]  # b x n_queries   每个anchor point到距离最远的context point的距离
+            max_geo_val = torch.max(max_geo_dist_context)
+            max_geo_dist_context[max_geo_dist_context < 0] = max_geo_val  # NOTE assign very big value to invalid queries
 
-        max_geo_dist_context = max_geo_dist_context[:, :, None, None].expand(
-            batch_size, n_queries, n_contexts, 3
-        )  # b x n_queries x n_contexts x 3
+            max_geo_dist_context = max_geo_dist_context[:, :, None, None].expand(
+                batch_size, n_queries, n_contexts, 3
+            )  # b x n_queries x n_contexts x 3
 
-        geo_dist_context = geo_dist_context[:, :, :, None].repeat(1, 1, 1, 3)   # b x n_quries x n_contexts x 3
+            geo_dist_context = geo_dist_context[:, :, :, None].repeat(1, 1, 1, 3)   # b x n_quries x n_contexts x 3
 
-        cond = geo_dist_context < 0     # 这些都是invalid的位置
-        geo_dist_context[cond] = max_geo_dist_context[cond] + relative_coords[cond]
+            cond = geo_dist_context < 0     # 这些都是invalid的位置
+            geo_dist_context[cond] = max_geo_dist_context[cond] + relative_coords[cond]
 
-        relative_embedding_pos = self.pos_embedding(
-            geo_dist_context.reshape(batch_size, n_queries * n_contexts, -1), input_range=pc_dims
-        ).reshape(
-            batch_size,
-            -1,
-            n_queries,
-            n_contexts,
-        )
-        relative_embedding_pos = relative_embedding_pos.permute(2, 3, 0, 1) # n_queries x n_contexts x batch x channel
+            relative_embedding_pos = self.pos_embedding(
+                geo_dist_context.reshape(batch_size, n_queries * n_contexts, -1), input_range=pc_dims
+            ).reshape(
+                batch_size,
+                -1,
+                n_queries,
+                n_contexts,
+            )
+            relative_embedding_pos = relative_embedding_pos.permute(2, 3, 0, 1) # n_queries x n_contexts x batch x channel
+        else:
+            relative_embedding_pos = None
 
         # num_layers x n_queries x batch x channel
         dec_outputs = self.decoder(

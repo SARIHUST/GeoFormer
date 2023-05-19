@@ -156,38 +156,29 @@ def do_test(model, dataset):
                 if torch.is_tensor(query_dict[key]):
                     query_dict[key] = query_dict[key].to(net_device)
 
-            remain = False
-            for j, (label, support_dict) in enumerate(zip(active_label, list_support_dicts)):
+            for j, (label, l_support_dicts) in enumerate(zip(active_label, list_support_dicts)):
                 for k in range(cfg.run_num):  # NOTE number of runs
-                    remember = False if (j == 0 and k == 0) else True
-                    if remain:
-                        remain = False
-                        remember = False
+                    support_dict = l_support_dicts[k]
                     remember = False    # 全部的support_dict都要利用
 
-                    support_embeddings = None
-                    if cfg.fix_support: # 即如果使用固定的support set，就会将预先计算好的support feature载入
-                        # support_embeddings = set_support_vectors[k][label].unsqueeze(0).to(net_device)
-                        pass
-                    else:
-                        for key in support_dict:
-                            if torch.is_tensor(support_dict[key]):
-                                support_dict[key] = support_dict[key].to(net_device)
+                    for key in support_dict:
+                        if torch.is_tensor(support_dict[key]):
+                            support_dict[key] = support_dict[key].to(net_device)
 
                     outputs = model(
                         support_dict,
                         query_dict,
                         training=False,
                         remember=remember,
-                        support_embeddings=support_embeddings,
+                        support_embeddings=None,
                     )
 
                     if outputs["no_fg"]:
-                        remain = True
-                        break
+                        continue
 
                     if outputs["proposal_scores"] is None:
                         continue
+
                     scores_pred, proposals_pred = outputs["proposal_scores"]
                     if isinstance(scores_pred, list):
                         continue
@@ -198,6 +189,8 @@ def do_test(model, dataset):
                     clusters[k].append(proposals_pred)
                     cluster_scores[k].append(scores_pred)
                     cluster_semantic_id[k].append(cluster_semantic)
+
+                    print('scene {}, target label {}, test set {}, predict mask shape: {}'.format(i, j, k, proposals_pred.shape))
 
                     # torch.cuda.empty_cache()
 
@@ -210,6 +203,7 @@ def do_test(model, dataset):
                     pred_info_arr[k].append(None)
                     continue
                 clusters[k] = torch.cat(clusters[k], axis=0)
+                print('scene {}, test set {}, predict mask shape: {}'.format(i, k, clusters[k].shape))
                 cluster_scores[k] = torch.cat(cluster_scores[k], axis=0)
                 cluster_semantic_id[k] = torch.cat(cluster_semantic_id[k], axis=0)
 
@@ -234,6 +228,7 @@ def do_test(model, dataset):
                     )
 
                 clusters[k] = clusters[k][pick_idxs_cluster].cpu().numpy()
+                print('after nms, ')
                 cluster_scores[k] = cluster_scores[k][pick_idxs_cluster].cpu().numpy()
                 cluster_semantic_id[k] = cluster_semantic_id[k][pick_idxs_cluster].cpu().numpy()
                 nclusters[k] = clusters[k].shape[0]
@@ -245,6 +240,7 @@ def do_test(model, dataset):
                     pred_info["mask"] = clusters[k]
                     pred_info_arr[k].append(pred_info)
 
+            exit()
             overlap_time = time.time() - start_time
 
             logger.info(

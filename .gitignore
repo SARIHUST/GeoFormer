@@ -90,3 +90,9 @@ after_pretrain
 bs_4
 bs_4_100
 mod_lr_40_rounds
+ablation_no_geo
+best_fs_test
+check_bs_4_100
+context_fps_anchor
+final_res
+test_results
